@@ -19,6 +19,14 @@ from sig_client import Client
 ROOT = pathlib.Path(__file__).parent
 
 
+def snapshot_age_seconds(snapshot: Snapshot) -> float:
+    value = snapshot.ts.replace('Z', '+00:00')
+    observed = dt.datetime.fromisoformat(value)
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=dt.timezone.utc)
+    return max(0.0, (dt.datetime.now(dt.timezone.utc) - observed).total_seconds())
+
+
 def kill_switch_active(path: pathlib.Path) -> bool:
     return path.exists()
 
@@ -84,6 +92,9 @@ def append_journal(path: pathlib.Path, report: dict) -> None:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replay")
+    parser.add_argument("--browser-snapshot", type=pathlib.Path,
+                        help="read the authenticated browser relay snapshot")
+    parser.add_argument("--max-snapshot-age", type=float, default=30.0)
     parser.add_argument("--interval", type=float, default=60.0)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--fill-ratio", type=float, default=1.0)
@@ -96,13 +107,29 @@ def main(argv=None):
     parser.add_argument("--kill-switch", type=pathlib.Path, default=ROOT / "logs/KILL_SWITCH")
     parser.add_argument("--journal", type=pathlib.Path, default=ROOT / "logs/paper-runs.jsonl")
     args = parser.parse_args(argv)
-    client = None if args.replay else Client()
-    markets = None if args.replay else client.markets()
+    if args.replay and args.browser_snapshot:
+        parser.error("--replay and --browser-snapshot are mutually exclusive")
+    client = None if args.replay or args.browser_snapshot else Client()
+    markets = None if args.replay or args.browser_snapshot else client.markets()
     while True:
         started = time.time()
         try:
             if args.replay:
                 snapshot = Snapshot.load(args.replay)
+            elif args.browser_snapshot:
+                snapshot = Snapshot.load(args.browser_snapshot)
+                age = snapshot_age_seconds(snapshot)
+                if age > args.max_snapshot_age:
+                    report = {"ts": snapshot.ts, "status": "STALE_SIG_SNAPSHOT",
+                              "snapshot_age_seconds": round(age, 3),
+                              "max_snapshot_age": args.max_snapshot_age,
+                              "orders_sent": 0, "research_only": True}
+                    append_journal(args.journal, report)
+                    print(json.dumps(report, indent=2), flush=True)
+                    if args.once:
+                        return
+                    time.sleep(max(0.0, args.interval - (time.time() - started)))
+                    continue
             else:
                 snapshot = Snapshot.fetch(client, markets)
             report = run_cycle(snapshot, min_roi=args.min_roi, min_edge=args.min_edge,

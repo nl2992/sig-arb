@@ -169,8 +169,9 @@ def report(snapshot, params, crossvenue=None):
 
 
 class Source:
-    def __init__(self, replay=None):
+    def __init__(self, replay=None, browser_snapshot_path=None):
         self.replay = replay
+        self.browser_snapshot_path = Path(browser_snapshot_path or ROOT / 'logs/browser_snapshot.json')
         self.lock = threading.Lock()
         self.snapshot = None
         self.fetched = 0
@@ -192,6 +193,12 @@ class Source:
         snapshot = Snapshot(
             payload.get('ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
             markets, {int(k): v for k, v in levels.items()})
+        self.browser_snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.browser_snapshot_path.with_suffix(self.browser_snapshot_path.suffix + '.tmp')
+        tmp.write_text(json.dumps({'ts': snapshot.ts, 'markets': snapshot.markets,
+                                   'levels': {str(k): v for k, v in snapshot.levels.items()}},
+                                  allow_nan=False))
+        tmp.replace(self.browser_snapshot_path)
         with self.lock:
             self.snapshot = snapshot
             self.fetched = time.monotonic()

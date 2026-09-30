@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from paper import run_cycle, simulate_result
+from paper import run_cycle, simulate_result, snapshot_age_seconds
 from signals import Snapshot, generate, load_exhaustive
 
 
@@ -39,6 +39,10 @@ class PaperTests(unittest.TestCase):
             report = run_cycle(self.snapshot, kill_switch=switch)
         self.assertEqual('KILL_SWITCH', report['status'])
         self.assertEqual(0, report['orders_sent'])
+
+    def test_snapshot_age_parser_handles_utc_z(self):
+        snapshot = Snapshot('2026-09-30T00:00:00Z', [], {})
+        self.assertGreaterEqual(snapshot_age_seconds(snapshot), 0)
 
 
 if __name__ == '__main__':

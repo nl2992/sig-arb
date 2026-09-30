@@ -21,6 +21,22 @@ labelled in the response: Kalshi provides top-of-book sizes, while the adapter
 fetches bounded Polymarket CLOB books and falls back to Gamma observations when
 a book is unavailable. No cross-venue row is execution-ready by default.
 
+When the Python SIG client cannot read the signed-in session, use the browser
+relay described in `README.md`. The dashboard writes each validated relay
+payload atomically to `logs/browser_snapshot.json`. Point both read-only
+workers at that file; they enforce a 30-second freshness limit:
+
+```bash
+PYTHONPATH=. python3 crossvenue.py live \
+  --sig-snapshot logs/browser_snapshot.json --interval 60
+PYTHONPATH=. python3 paper.py \
+  --browser-snapshot logs/browser_snapshot.json --interval 60
+```
+
+If the browser tab stops refreshing, both workers report
+`STALE_SIG_SNAPSHOT` and remain at zero orders. The relay snapshot is a shared
+research input, not an execution credential.
+
 For a no-order paper/shadow run, use the dedicated runner. It journals every
 simulated fill and residual reconciliation, applies the default 5% ROI hurdle,
 and stops immediately when `logs/KILL_SWITCH` exists:

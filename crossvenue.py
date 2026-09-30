@@ -44,8 +44,23 @@ def _read_jsonl(path):
     return rows
 
 
+def _snapshot_age_seconds(snapshot):
+    value = snapshot.ts.replace('Z', '+00:00')
+    observed = dt.datetime.fromisoformat(value)
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=dt.timezone.utc)
+    return max(0.0, (dt.datetime.now(dt.timezone.utc) - observed).total_seconds())
+
+
 def _live_once(args, cli, markets, matches, history):
-    snap = Snapshot.fetch(cli, markets)
+    snap = Snapshot.load(args.sig_snapshot) if args.sig_snapshot else Snapshot.fetch(cli, markets)
+    age = _snapshot_age_seconds(snap)
+    if args.sig_snapshot and age > args.max_snapshot_age:
+        return {"ts": snap.ts, "status": "STALE_SIG_SNAPSHOT",
+                "snapshot_age_seconds": round(age, 3),
+                "max_snapshot_age": args.max_snapshot_age,
+                "execution_enabled": False,
+                "note": "Research scan blocked until the authenticated SIG snapshot refreshes."}
     public = fetch_public(["kalshi", "polymarket"], args.limit)
     observations = [PriceObservation(**row)
                     for venue in public.values() for row in venue["observations"]]
@@ -112,6 +127,9 @@ def main(argv=None):
     live.add_argument("--history", type=pathlib.Path, default=ROOT / "logs/crossvenue-history.jsonl")
     live.add_argument("--interval", type=float, default=60.0)
     live.add_argument("--once", action="store_true", help="run one cycle and exit")
+    live.add_argument("--sig-snapshot", type=pathlib.Path,
+                      help="read SIG books from the authenticated browser relay")
+    live.add_argument("--max-snapshot-age", type=float, default=30.0)
     live.add_argument("--limit", type=int, default=1000)
     live.add_argument("--min-move-pp", type=float, default=5.0)
     live.add_argument("--lookback-minutes", type=int, default=120)
@@ -132,8 +150,8 @@ def main(argv=None):
     if args.command == "live":
         from sig_client import Client
         matches = load_registry(args.matches)
-        cli = Client()
-        markets = cli.markets()
+        cli = None if args.sig_snapshot else Client()
+        markets = None if args.sig_snapshot else cli.markets()
         history = _read_jsonl(args.history)
         while True:
             started = time.time()
@@ -149,7 +167,8 @@ def main(argv=None):
                 return
             time.sleep(max(0.0, args.interval - (time.time() - started)))
             # Market membership can change during election season.
-            markets = cli.markets()
+            if cli is not None:
+                markets = cli.markets()
 
     snap = Snapshot.load(args.snapshot)
     payload = json.loads(pathlib.Path(args.observations).read_text())

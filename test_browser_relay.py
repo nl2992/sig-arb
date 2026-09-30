@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 
 from dashboard import Source
 from signals import Snapshot, scan_diagnostics
@@ -6,14 +7,16 @@ from signals import Snapshot, scan_diagnostics
 
 class BrowserRelayTests(unittest.TestCase):
     def test_accepts_browser_snapshot(self):
-        source = Source()
-        result = source.accept_browser_snapshot({
-            'ts': '2026-09-30T00:00:00Z',
-            'markets': [{'id': 1, 'title': 'Will the Republican Party win the Test Senate?'}],
-            'levels': {'1': [{'price': 0.4, 'quantity': 10, 'side': 'BUY', 'isYes': True}]},
-        })
-        self.assertEqual(result['markets'], 1)
-        self.assertEqual(source.get().markets[0]['id'], 1)
+        with tempfile.TemporaryDirectory() as d:
+            source = Source(browser_snapshot_path=f'{d}/browser_snapshot.json')
+            result = source.accept_browser_snapshot({
+                'ts': '2026-09-30T00:00:00Z',
+                'markets': [{'id': 1, 'title': 'Will the Republican Party win the Test Senate?'}],
+                'levels': {'1': [{'price': 0.4, 'quantity': 10, 'side': 'BUY', 'isYes': True}]},
+            })
+            self.assertEqual(result['markets'], 1)
+            self.assertEqual(source.get().markets[0]['id'], 1)
+            self.assertTrue((source.browser_snapshot_path).exists())
 
     def test_one_sided_browser_snapshot_matches_loaded_snapshot(self):
         payload = {

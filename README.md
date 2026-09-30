@@ -110,7 +110,18 @@ page console. It fetches the same paginated market and order endpoints as the
 supplied export script, sends full levels to `/api/browser_snapshot`, and
 refreshes every 15 seconds. Stop it with
 `clearInterval(window.sigDashboardRelay)`. The relay only reads market data;
-execution remains dry-run and requires separate order-payload verification.
+the dashboard persists its validated payload at `logs/browser_snapshot.json`.
+That snapshot can also drive the read-only scanner and paper runner without
+copying a session cookie:
+
+```bash
+PYTHONPATH=. python3 crossvenue.py live --sig-snapshot logs/browser_snapshot.json
+PYTHONPATH=. python3 paper.py --browser-snapshot logs/browser_snapshot.json
+```
+
+Both commands fail closed with `STALE_SIG_SNAPSHOT` after 30 seconds without a
+fresh relay payload. The relay only reads market data; execution remains
+dry-run and requires separate order-payload verification.
 
 ### Control-market guardrails
 
