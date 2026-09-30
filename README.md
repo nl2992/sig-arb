@@ -209,3 +209,6 @@ rules, resolution sources, timing, and outcome semantics have been reviewed.
 The recurring workflow and staged execution gates are documented in
 [docs/operating-guide.md](docs/operating-guide.md) and
 [docs/systematic-execution-plan.md](docs/systematic-execution-plan.md).
+Dashboard opportunity rows carry explicit freshness, mapping, settlement, fee,
+liquidity, and execution-risk fields; `execution_ready` remains false until
+the relevant gates are independently verified.

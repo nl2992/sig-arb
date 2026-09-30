@@ -1,5 +1,6 @@
 """Read-only local dashboard. Run: python3 dashboard.py --port 8765."""
 import argparse
+import datetime as dt
 import json
 import math
 import threading
@@ -52,6 +53,41 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     all_observations = historical + observations
     movement = scan_movements(snapshot, all_observations, matches).to_dict()
     relative = scan_pairs(history, matches)
+    market_index = {(venue, str(row.get('market_id'))): row
+                    for venue, data in payload.items()
+                    for row in data.get('markets', [])}
+    observation_index = {(row.venue, row.market_id, row.outcome_id.upper()): row
+                         for row in observations}
+    books = snapshot.books()
+    enriched = []
+    now = dt.datetime.now(dt.timezone.utc)
+    for candidate in movement.get('candidates', []):
+        match = next((m for m in matches if m.sig_market_id == candidate['sig_market_id']
+                      and m.reference_venue == candidate['reference_venue']
+                      and m.reference_market_id == candidate['reference_market_id']), None)
+        ref = observation_index.get((candidate['reference_venue'], candidate['reference_market_id'],
+                                     match.reference_outcome_id.upper() if match else 'YES'))
+        metadata = market_index.get((candidate['reference_venue'], candidate['reference_market_id']), {})
+        book = books.get(candidate['sig_market_id'])
+        required = book.asks if candidate['direction'] == 'BUY_YES' and book else book.bids if book else []
+        top_qty = required[0][1] if required else None
+        try:
+            age = max(0.0, (now - dt.datetime.fromisoformat(ref.observed_at.replace('Z', '+00:00'))).total_seconds()) if ref else None
+        except (TypeError, ValueError):
+            age = None
+        candidate.update({
+            'liquidity': {'sig_top_qty': top_qty, 'reference_bid_size': ref.bid_size if ref else None,
+                          'reference_ask_size': ref.ask_size if ref else None},
+            'freshness_seconds': age,
+            'mapping_status': match.status if match else 'UNRESOLVED',
+            'settlement_status': 'RULES_PRESENT_REVIEWED' if metadata.get('rules_text') else 'RULES_UNAVAILABLE',
+            'fee_assumption': 0.0,
+            'fee_status': 'UNVERIFIED_PUBLIC_SCHEDULE',
+            'roi_estimate': round(candidate['gap_pp'] / abs(candidate['sig_price']) / 100, 6) if candidate.get('gap_pp') and candidate.get('sig_price') else None,
+            'execution_risk': ['RESEARCH_ONLY', 'MULTI_VENUE_FILL_RISK', 'FEES_UNVERIFIED'],
+            'execution_ready': False,
+        })
+        enriched.append(candidate)
     market_counts = {venue: len(data.get('markets', [])) for venue, data in payload.items()}
     observation_counts = {venue: len(data.get('observations', [])) for venue, data in payload.items()}
     approved = [m for m in matches if m.status == 'APPROVED']
@@ -60,8 +96,11 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
         'observation_counts': observation_counts,
         'mapping_counts': {'discovered': len(matches), 'approved': len(approved)},
         'movement': movement,
+        'opportunities': enriched,
         'relative_value': relative,
         'history_points': len(history),
+        'depth_coverage': 'TOP_OF_BOOK_SIZES_ONLY',
+        'fees': {'sig': 'dashboard input', 'kalshi': 'unverified', 'polymarket': 'unverified'},
         'research_only': True,
     }
 
@@ -97,6 +136,11 @@ def report(snapshot, params, crossvenue=None):
             race=r.race, direction=r.direction, qty=r.qty, profit=r.pnl,
             capital=r.capital, roi=r.roi, edge=r.avg_edge,
             top_edge=r.top_edge, marginal_edge=r.marginal_edge,
+            freshness_seconds=0,
+            mapping_status='LOCAL_SIG', settlement_status='SIG_RULES_UNVERIFIED',
+            fee_assumption=fee,
+            execution_risk=['PARTIAL_FILL', 'QUOTE_AGE_CHECK_REQUIRED'],
+            execution_ready=False,
             vwap=sum(1-l.vwap if no else l.vwap for l in r.legs),
             steps=r.steps,
             legs=[dict(id=l.market_id, title=titles[l.market_id],

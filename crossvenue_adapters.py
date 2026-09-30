@@ -69,6 +69,8 @@ class KalshiAdapter(PublicAdapter):
                 observed_at=observed, source_ts=normalize_ts(item.get("updated_time")),
                 bid=parse_float(item.get("yes_bid_dollars")),
                 ask=parse_float(item.get("yes_ask_dollars")),
+                bid_size=parse_float(item.get("yes_bid_size_fp")),
+                ask_size=parse_float(item.get("yes_ask_size_fp")),
                 last=parse_float(item.get("last_price_dollars")),
                 volume=parse_float(item.get("volume_fp")), source="kalshi-rest",
                 price_basis="last" if item.get("last_price_dollars") not in (None, "") else "mid",
@@ -113,6 +115,8 @@ class PolymarketAdapter(PublicAdapter):
                 out.append(PriceObservation(
                     venue=self.venue, market_id=str(item.get("id")), outcome_id=outcome.upper(),
                     observed_at=observed, source_ts=normalize_ts(item.get("updatedAt")),
+                    bid=parse_float(item.get("bestBid")), ask=parse_float(item.get("bestAsk")),
+                    bid_size=parse_float(item.get("bestBidSize")), ask_size=parse_float(item.get("bestAskSize")),
                     last=parse_float(price), volume=parse_float(item.get("volume")),
                     source="polymarket-gamma", price_basis="outcome_price",
                 ))

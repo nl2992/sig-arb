@@ -44,6 +44,8 @@ class PriceObservation:
     source_ts: Optional[str] = None
     bid: Optional[float] = None
     ask: Optional[float] = None
+    bid_size: Optional[float] = None
+    ask_size: Optional[float] = None
     last: Optional[float] = None
     volume: Optional[float] = None
     source: str = "unknown"
