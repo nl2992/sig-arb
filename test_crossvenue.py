@@ -84,6 +84,24 @@ class CrossVenueTests(unittest.TestCase):
         market = MarketMetadata('kalshi', 'KX1', 'E1', 'Q', [{'outcome_id': 'YES'}, {'outcome_id': 'NO'}])
         self.assertEqual([], adapter.books([market]))
 
+    def test_empty_target_set_is_incomplete(self):
+        from crossvenue_adapters import fetch_public
+        result = fetch_public(['kalshi'], market_ids={'kalshi': []})
+        self.assertFalse(result['kalshi']['coverage']['complete'])
+
+    def test_malformed_ladder_types_are_not_valid_empty_books(self):
+        class Fake:
+            def get(self, *args, **kwargs):
+                class Response:
+                    status_code = 200
+                    headers = {}
+                    def raise_for_status(self): pass
+                    def json(self): return {'orderbook_fp': {'yes_dollars': None, 'no_dollars': []}}
+                return Response()
+        adapter = KalshiAdapter(session=Fake())
+        market = MarketMetadata('kalshi', 'KX1', 'E1', 'Q', [{'outcome_id': 'YES'}, {'outcome_id': 'NO'}])
+        self.assertEqual([], adapter.books([market]))
+
     def test_millisecond_timestamps_are_normalized(self):
         self.assertEqual("2026-09-30T00:00:00+00:00", normalize_ts("1790726400000"))
 

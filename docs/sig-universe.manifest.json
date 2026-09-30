@@ -2,5 +2,6 @@
   "version": "2026-09-30.v1",
   "source": "docs/market-links.csv",
   "expected_count": 237,
+  "universe_digest": "5017523432179ce30cd645dbf8e81fca47296ce319de9b81d7d48792be285c4c",
   "approval": "reviewed-fixed-research-universe"
 }

@@ -40,6 +40,13 @@ class SystemCheckTests(unittest.TestCase):
         self.assertEqual("FAIL", result["checks"]["sig_snapshot"]["status"])
         self.assertFalse(result["ready_for_paper"])
 
+    def test_duplicate_sig_snapshot_ids_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot.json"
+            snapshot.write_text(json.dumps({"ts": "2026-09-30T00:00:00Z", "markets": [{"id": 1, "title": "wrong"}, {"id": 1, "title": "wrong"}], "levels": {"1": []}}))
+            result = readiness(snapshot_path=snapshot)
+        self.assertEqual("FAIL", result["checks"]["sig_snapshot"]["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

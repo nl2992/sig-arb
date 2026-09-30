@@ -151,7 +151,9 @@ class KalshiAdapter(PublicAdapter):
             except requests.RequestException:
                 return []
             orderbook = payload.get("orderbook_fp", {}) if isinstance(payload, dict) else {}
-            if not isinstance(orderbook, dict) or not {"yes_dollars", "no_dollars"}.issubset(orderbook):
+            if (not isinstance(orderbook, dict) or
+                    not isinstance(orderbook.get("yes_dollars"), list) or
+                    not isinstance(orderbook.get("no_dollars"), list)):
                 return []
             yes_bids = self._book_levels(orderbook.get("yes_dollars"))
             no_bids = self._book_levels(orderbook.get("no_dollars"))
@@ -241,7 +243,9 @@ class PolymarketAdapter(PublicAdapter):
                     payload = self._clob_get("/book", token_id=str(token_id))
                 except requests.RequestException:
                     continue
-                if not isinstance(payload, dict) or "bids" not in payload or "asks" not in payload:
+                if (not isinstance(payload, dict) or
+                        not isinstance(payload.get("bids"), list) or
+                        not isinstance(payload.get("asks"), list)):
                     continue
                 bids = self._levels(payload.get("bids"))
                 asks = self._levels(payload.get("asks"))
@@ -372,7 +376,7 @@ def fetch_public(venues: Iterable[str], limit: int = 1000, market_ids: dict | No
         missing_book_keys = sorted(expected_book_keys - returned_book_keys)
         book_ids = {market_id for market_id, _ in returned_book_keys}
         missing_book_ids = sorted(returned_ids - book_ids)
-        scope_complete = ids is not None or limit <= 0
+        scope_complete = (ids is not None and bool(ids)) or (ids is None and limit <= 0)
         result[venue] = {
             "markets": [m.to_dict() for m in market_rows],
             "observations": [o.to_dict() for o in observation_rows],
