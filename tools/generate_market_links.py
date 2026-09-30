@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import pathlib
 import re
@@ -57,7 +58,36 @@ def _polymarket_candidates(title: str, inventory: list[dict]) -> list[dict]:
                     candidates.append({
                         "id": str(row.get("id")),
                         "question": question,
-                        "url": f"https://polymarket.com/event/{event['slug']}",
+                        "url": f"https://polymarket.com/event/{event['slug']}/{row.get('slug')}",
+                    })
+        return candidates
+    house = re.fullmatch(
+        r"Will the (Republican|Democratic|Independent) Party win the ([A-Z]{2}-\d{2}) House race\?",
+        title,
+    )
+    if house:
+        party, district = (part.lower() for part in house.groups())
+        party_forms = {
+            "republican": ("republicans", "republican party", "republican"),
+            "democratic": ("democrats", "democratic party", "democratic"),
+            "independent": ("an independent", "independent party", "independent"),
+        }[party]
+        token = district.lower()
+        candidates = []
+        for row in inventory:
+            question = str(row.get("question", ""))
+            question_lower = question.lower()
+            if (
+                token in question_lower
+                and "house" in question_lower
+                and any(form in question_lower for form in party_forms)
+            ):
+                event = (row.get("events") or [{}])[0]
+                if event.get("slug"):
+                    candidates.append({
+                        "id": str(row.get("id")),
+                        "question": question,
+                        "url": f"https://polymarket.com/event/{event['slug']}/{row.get('slug')}",
                     })
         return candidates
     match = re.fullmatch(
@@ -92,7 +122,7 @@ def _polymarket_candidates(title: str, inventory: list[dict]) -> list[dict]:
             candidates.append({
                 "id": str(row.get("id")),
                 "question": question,
-                "url": f"https://polymarket.com/event/{event_slug}",
+                "url": f"https://polymarket.com/event/{event_slug}/{row.get('slug')}",
             })
     return candidates
 
@@ -139,6 +169,32 @@ def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
             )
             for event in inventory
         ) else []
+    house = re.fullmatch(
+        r"Will the (Republican|Democratic|Independent) Party win the ([A-Z]{2})-(\d{2}) House race\?",
+        title,
+    )
+    if house:
+        party, state, district = (part.lower() for part in house.groups())
+        series = f"HOUSE{state}{int(district)}".upper()
+        candidates = []
+        for event in inventory:
+            if str(event.get("series_ticker", "")).upper() != series:
+                continue
+            if "2026" not in str(event.get("sub_title", "")) and "2026" not in str(event.get("event_ticker", "")):
+                continue
+            for market in event.get("markets", []):
+                label = " ".join(
+                    str(market.get(key, "")) for key in ("yes_sub_title", "title")
+                ).lower()
+                if party not in label:
+                    continue
+                event_id = str(event.get("event_ticker", "")).lower()
+                candidates.append({
+                    "id": str(market.get("ticker")),
+                    "event": str(event.get("event_ticker")),
+                    "url": f"https://kalshi.com/markets/{series.lower()}/{event_id}",
+                })
+        return candidates
     match = re.fullmatch(
         r"Will the (Republican|Democratic|Independent) Party win the (.+) (Senate|Governor)\?",
         title,
@@ -160,11 +216,11 @@ def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
             if party not in label:
                 continue
             series = str(event.get("series_ticker", "")).lower()
-            slug = re.sub(r"[^a-z0-9]+", "-", str(event.get("title", "")).lower()).strip("-")
+            event_id = str(event.get("event_ticker", "")).lower()
             candidates.append({
                 "id": str(market.get("ticker")),
                 "event": str(event.get("event_ticker")),
-                "url": f"https://kalshi.com/markets/{series}/{slug}",
+                "url": f"https://kalshi.com/markets/{series}/{event_id}",
             })
     return candidates
 
@@ -172,6 +228,7 @@ def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="docs/market-links.md")
+    parser.add_argument("--csv-out", default="docs/market-links.csv")
     args = parser.parse_args()
 
     markets = sorted(Client().markets(), key=lambda row: int(row["id"]), reverse=True)
@@ -208,11 +265,12 @@ def main() -> None:
         "",
         "## Three-Venue Mapping Table",
         "",
-        "Each row has the intended SIG, Kalshi, and Polymarket slots. Links marked `candidate` are title/market-structure matches found through the public APIs and still require settlement review.",
+        "Each row has the intended SIG, Kalshi, and Polymarket slots. Links marked `candidate` are title/market-structure matches found through the public APIs and still require settlement review. Native venue identifiers and raw URLs are also exported to `docs/market-links.csv`.",
         "",
         "| SIG ID | Event | SIG | Kalshi | Polymarket | Status |",
         "|---:|---|---|---|---|---|",
     ]
+    csv_rows = []
     for market in markets:
         market_id = int(market["id"])
         title = str(market.get("title", "")).replace("|", "\\|")
@@ -221,17 +279,37 @@ def main() -> None:
         kalshi_candidates = kalshi_map[market_id]
         if len(kalshi_candidates) == 1:
             kalshi_link = f"[candidate]({kalshi_candidates[0]['url']})"
+            kalshi_url = kalshi_candidates[0]["url"]
+            kalshi_id = kalshi_candidates[0]["id"]
         else:
             kalshi_link = "Not found"
+            kalshi_url = ""
+            kalshi_id = ""
         if len(candidates) == 1:
             poly_link = f"[candidate]({candidates[0]['url']})"
-            status = "Both venue candidates; review"
+            poly_url = candidates[0]["url"]
+            poly_id = candidates[0]["id"]
+            status = "Both venue candidates; review" if len(kalshi_candidates) == 1 else "Polymarket candidate; Kalshi unresolved"
         elif len(candidates) > 1:
             poly_link = "Ambiguous candidates"
+            poly_url = ""
+            poly_id = ""
             status = "Manual review required"
         else:
             poly_link = "Not found"
+            poly_url = ""
+            poly_id = ""
             status = "Kalshi candidate; Polymarket unresolved" if len(kalshi_candidates) == 1 else "No venue match found"
+        csv_rows.append({
+            "sig_market_id": market_id,
+            "event": str(market.get("title", "")),
+            "sig_url": f"{SIG_BASE}/{market_id}",
+            "kalshi_url": kalshi_url,
+            "kalshi_market_id": kalshi_id,
+            "polymarket_url": poly_url,
+            "polymarket_market_id": poly_id,
+            "status": status,
+        })
         lines.append(
             f"| {market_id} | {title} | {sig_link} | {kalshi_link} | {poly_link} | {status} |"
         )
@@ -263,6 +341,12 @@ def main() -> None:
     output = pathlib.Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines), encoding="utf-8")
+    csv_output = pathlib.Path(args.csv_out)
+    csv_output.parent.mkdir(parents=True, exist_ok=True)
+    with csv_output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(csv_rows[0]))
+        writer.writeheader()
+        writer.writerows(csv_rows)
     print(f"wrote {output} ({len(markets)} SIG markets)")
 
 
