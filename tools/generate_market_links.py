@@ -37,6 +37,29 @@ def _polymarket_inventory() -> list[dict]:
 
 
 def _polymarket_candidates(title: str, inventory: list[dict]) -> list[dict]:
+    national = re.fullmatch(
+        r"Will the (Republican|Democratic) Party win the U\.S\. (House|Senate)\?",
+        title,
+    )
+    if national:
+        party, chamber = (part.lower() for part in national.groups())
+        party_form = "republican party" if party == "republican" else "democratic party"
+        candidates = []
+        for row in inventory:
+            question = str(row.get("question", ""))
+            question_lower = question.lower()
+            if (
+                party_form in question_lower
+                and f"control the {chamber.lower()} after the 2026 midterm elections" in question_lower
+            ):
+                event = (row.get("events") or [{}])[0]
+                if event.get("slug"):
+                    candidates.append({
+                        "id": str(row.get("id")),
+                        "question": question,
+                        "url": f"https://polymarket.com/event/{event['slug']}",
+                    })
+        return candidates
     match = re.fullmatch(
         r"Will the (Republican|Democratic|Independent) Party win the (.+) (Senate|Governor)\?",
         title,
@@ -94,6 +117,28 @@ def _kalshi_inventory() -> list[dict]:
 
 
 def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
+    national = re.fullmatch(
+        r"Will the (Republican|Democratic) Party win the U\.S\. (House|Senate)\?",
+        title,
+    )
+    if national:
+        party, chamber = (part.lower() for part in national.groups())
+        series = "controlh" if chamber == "house" else "controls"
+        event_slug = "house-winner" if chamber == "house" else "senate-winner"
+        event_ticker = f"{series.upper()}-2026"
+        party_label = "republican" if party == "republican" else "democratic"
+        return [{
+            "id": f"{event_ticker}-{party[0].upper()}",
+            "event": event_ticker,
+            "url": f"https://kalshi.com/markets/{series}/{event_slug}/{event_ticker.lower()}",
+        }] if any(
+            event.get("event_ticker") == event_ticker
+            and any(
+                party_label in " ".join(str(market.get(key, "")) for key in ("yes_sub_title", "title")).lower()
+                for market in event.get("markets", [])
+            )
+            for event in inventory
+        ) else []
     match = re.fullmatch(
         r"Will the (Republican|Democratic|Independent) Party win the (.+) (Senate|Governor)\?",
         title,

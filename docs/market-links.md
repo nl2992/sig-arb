@@ -2,10 +2,10 @@
 
 > Generated from the authenticated SIG market universe. This file is a point-in-time index; run the generator again when the universe changes.
 
-Generated: `2026-09-30T08:27:10.457530+00:00`
+Generated: `2026-09-30T08:28:34.884919+00:00`
 Market count: **237**
-Kalshi candidate links found: **134**
-Polymarket candidate links found: **135**
+Kalshi candidate links found: **138**
+Polymarket candidate links found: **139**
 Production cross-venue mappings: **0 approved** (the registry remains intentionally empty until settlement rules are manually verified).
 
 ## Venue Links
@@ -255,10 +255,10 @@ Each row has the intended SIG, Kalshi, and Polymarket slots. Links marked `candi
 | 157 | Will the Democratic Party win the Arkansas Governor? | [SIG](https://sig.thesuper.market/markets/157) | [candidate](https://kalshi.com/markets/govpartyar/arkansas-governor-winner) | [candidate](https://polymarket.com/event/arkansas-governor-winner-2026) | Both venue candidates; review |
 | 156 | Will the Republican Party win the Alabama Governor? | [SIG](https://sig.thesuper.market/markets/156) | [candidate](https://kalshi.com/markets/govpartyal/alabama-governor-winner) | [candidate](https://polymarket.com/event/alabama-governor-winner-2026) | Both venue candidates; review |
 | 155 | Will the Democratic Party win the Alabama Governor? | [SIG](https://sig.thesuper.market/markets/155) | [candidate](https://kalshi.com/markets/govpartyal/alabama-governor-winner) | [candidate](https://polymarket.com/event/alabama-governor-winner-2026) | Both venue candidates; review |
-| 154 | Will the Republican Party win the U.S. Senate? | [SIG](https://sig.thesuper.market/markets/154) | Not found | Not found | No venue match found |
-| 153 | Will the Democratic Party win the U.S. Senate? | [SIG](https://sig.thesuper.market/markets/153) | Not found | Not found | No venue match found |
-| 152 | Will the Republican Party win the U.S. House? | [SIG](https://sig.thesuper.market/markets/152) | Not found | Not found | No venue match found |
-| 151 | Will the Democratic Party win the U.S. House? | [SIG](https://sig.thesuper.market/markets/151) | Not found | Not found | No venue match found |
+| 154 | Will the Republican Party win the U.S. Senate? | [SIG](https://sig.thesuper.market/markets/154) | [candidate](https://kalshi.com/markets/controls/senate-winner/controls-2026) | [candidate](https://polymarket.com/event/which-party-will-win-the-senate-in-2026) | Both venue candidates; review |
+| 153 | Will the Democratic Party win the U.S. Senate? | [SIG](https://sig.thesuper.market/markets/153) | [candidate](https://kalshi.com/markets/controls/senate-winner/controls-2026) | [candidate](https://polymarket.com/event/which-party-will-win-the-senate-in-2026) | Both venue candidates; review |
+| 152 | Will the Republican Party win the U.S. House? | [SIG](https://sig.thesuper.market/markets/152) | [candidate](https://kalshi.com/markets/controlh/house-winner/controlh-2026) | [candidate](https://polymarket.com/event/which-party-will-win-the-house-in-2026) | Both venue candidates; review |
+| 151 | Will the Democratic Party win the U.S. House? | [SIG](https://sig.thesuper.market/markets/151) | [candidate](https://kalshi.com/markets/controlh/house-winner/controlh-2026) | [candidate](https://polymarket.com/event/which-party-will-win-the-house-in-2026) | Both venue candidates; review |
 
 ## Production Registry
 
