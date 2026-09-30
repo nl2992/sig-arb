@@ -76,6 +76,36 @@ class CrossVenueTests(unittest.TestCase):
         p = PolymarketAdapter(session=Fake([{"id": "P1", "question": "Q", "outcomes": '["Yes", "No"]', "outcomePrices": '["0.4", "0.6"]', "active": True, "closed": False}]))
         self.assertEqual(2, len(p.observations(1)))
 
+    def test_kalshi_markets_follow_cursor(self):
+        class Paged:
+            def __init__(self): self.calls = []
+            def get(self, url, *args, **kwargs):
+                self.calls.append(kwargs)
+                cursor = kwargs.get('params', {}).get('cursor')
+                page = [{'ticker': 'KX1' if not cursor else 'KX2', 'title': 'Q', 'status': 'active'}]
+                class R:
+                    def raise_for_status(self): pass
+                    def json(self): return {'markets': page, 'cursor': '' if cursor else 'next'}
+                return R()
+        session = Paged()
+        adapter = KalshiAdapter(session=session)
+        self.assertEqual(['KX1', 'KX2'], [m.market_id for m in adapter.markets(2)])
+        self.assertEqual(2, len(session.calls))
+
+    def test_polymarket_markets_follow_offset(self):
+        class Paged:
+            def get(self, url, *args, **kwargs):
+                offset = kwargs.get('params', {}).get('offset', 0)
+                rows = [{'id': f'P{offset + index + 1}', 'question': 'Q', 'outcomes': '["Yes"]',
+                         'outcomePrices': '["0.5"]', 'active': True, 'closed': False}
+                        for index in range(2)]
+                class R:
+                    def raise_for_status(self): pass
+                    def json(self): return rows
+                return R()
+        adapter = PolymarketAdapter(session=Paged())
+        self.assertEqual(['P1', 'P2'], [m.market_id for m in adapter.markets(2)])
+
     def test_polymarket_clob_books_are_normalized(self):
         class FakeCLOB:
             def get(self, url, *args, **kwargs):
@@ -97,6 +127,22 @@ class CrossVenueTests(unittest.TestCase):
         self.assertEqual(2, len(books))
         self.assertEqual(0.4, books[0]['best_bid'])
         self.assertEqual(12.0, books[0]['best_bid_size'])
+
+    def test_polymarket_zero_limit_means_all_returned_markets(self):
+        class FakeCLOB:
+            def get(self, url, *args, **kwargs):
+                class R:
+                    def raise_for_status(self): pass
+                    def json(self):
+                        if '/book' in url:
+                            return {'bids': [], 'asks': []}
+                        return [{'id': 'P1', 'question': 'Q1', 'outcomes': '["Yes"]',
+                                 'outcomePrices': '["0.4"]', 'clobTokenIds': '["T1"]',
+                                 'active': True, 'closed': False}]
+                return R()
+        adapter = PolymarketAdapter(session=FakeCLOB())
+        markets = adapter.markets(1)
+        self.assertEqual(1, len(adapter.books(markets, 0)))
 
     def test_kalshi_orderbook_derives_complementary_asks(self):
         class FakeKalshi:

@@ -55,15 +55,28 @@ class KalshiAdapter(PublicAdapter):
         super().__init__(base_url or os.getenv("KALSHI_PUBLIC_API", self.DEFAULT_BASE_URL), **kwargs)
 
     def markets(self, limit: int = 1000) -> List[MarketMetadata]:
-        payload = self._get("/markets", status="open", limit=limit)
+        rows, cursor = [], ""
+        while len(rows) < limit:
+            page_size = min(200, limit - len(rows))
+            params = {"status": "open", "limit": page_size}
+            if cursor:
+                params["cursor"] = cursor
+            payload = self._get("/markets", **params)
+            page = payload.get("markets", [])
+            rows.extend(page)
+            next_cursor = payload.get("cursor", "")
+            if not page or not next_cursor or next_cursor == cursor:
+                break
+            cursor = next_cursor
         observed = _now()
-        return [self._market(item, observed) for item in payload.get("markets", [])]
+        return [self._market(item, observed) for item in rows[:limit]]
 
-    def observations(self, limit: int = 1000) -> List[PriceObservation]:
-        payload = self._get("/markets", status="open", limit=limit)
+    def observations(self, limit: int = 1000, markets: List[MarketMetadata] | None = None) -> List[PriceObservation]:
+        market_rows = markets if markets is not None else self.markets(limit)
         observed = _now()
         out = []
-        for item in payload.get("markets", []):
+        for market in market_rows:
+            item = market.raw or {}
             out.append(PriceObservation(
                 venue=self.venue, market_id=str(item.get("ticker")), outcome_id="YES",
                 observed_at=observed, source_ts=normalize_ts(item.get("updated_time")),
@@ -169,7 +182,8 @@ class PolymarketAdapter(PublicAdapter):
     def books(self, markets: List[MarketMetadata], limit: int = 100) -> List[dict]:
         """Fetch bounded public CLOB books; failures are isolated per token."""
         out = []
-        for market in markets[:max(0, limit)]:
+        selected = markets if limit <= 0 else markets[:limit]
+        for market in selected:
             raw = market.raw or {}
             token_ids = _json_list(raw.get("clobTokenIds"))
             outcomes = [x["outcome_id"] for x in market.outcomes]
@@ -197,15 +211,25 @@ class PolymarketAdapter(PublicAdapter):
         return out
 
     def markets(self, limit: int = 1000) -> List[MarketMetadata]:
-        payload = self._get("/markets", active="true", closed="false", limit=limit)
+        rows, offset = [], 0
+        page_size = min(1000, limit)
+        while len(rows) < limit:
+            payload = self._get("/markets", active="true", closed="false",
+                                limit=page_size, offset=offset)
+            page = payload if isinstance(payload, list) else payload.get("markets", [])
+            rows.extend(page)
+            if not page or len(page) < page_size:
+                break
+            offset += len(page)
         observed = _now()
-        return [self._market(item, observed) for item in (payload if isinstance(payload, list) else payload.get("markets", []))]
+        return [self._market(item, observed) for item in rows[:limit]]
 
-    def observations(self, limit: int = 1000) -> List[PriceObservation]:
-        payload = self._get("/markets", active="true", closed="false", limit=limit)
+    def observations(self, limit: int = 1000, markets: List[MarketMetadata] | None = None) -> List[PriceObservation]:
+        market_rows = markets if markets is not None else self.markets(limit)
         observed = _now()
         out = []
-        for item in (payload if isinstance(payload, list) else payload.get("markets", [])):
+        for market in market_rows:
+            item = market.raw or {}
             prices = _json_list(item.get("outcomePrices"))
             outcomes = _json_list(item.get("outcomes")) or ["Yes", "No"]
             for index, price in enumerate(prices):
@@ -241,7 +265,7 @@ def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
     for venue in venues:
         adapter = adapters[venue]
         market_rows = adapter.markets(limit)
-        observation_rows = adapter.observations(limit)
+        observation_rows = adapter.observations(limit, market_rows)
         books = []
         if venue == "kalshi":
             depth_limit = int(os.getenv("KALSHI_DEPTH_LIMIT", "100"))
@@ -256,7 +280,7 @@ def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
                    "source": "kalshi-orderbook" if (o.market_id, o.outcome_id.upper()) in best else o.source}
             ) for o in observation_rows]
         elif venue == "polymarket":
-            depth_limit = int(os.getenv("POLYMARKET_DEPTH_LIMIT", "100"))
+            depth_limit = int(os.getenv("POLYMARKET_DEPTH_LIMIT", "0"))
             books = adapter.books(market_rows, depth_limit)
             best = {(b["market_id"], b["outcome_id"].upper()): b for b in books}
             observation_rows = [PriceObservation(
@@ -271,5 +295,6 @@ def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
             "markets": [m.to_dict() for m in market_rows],
             "observations": [o.to_dict() for o in observation_rows],
             "books": books,
+            "book_coverage": "ALL_RETURNED_MARKETS" if venue == "kalshi" or depth_limit <= 0 else "BOUNDED_MARKET_COUNT",
         }
     return result

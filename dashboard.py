@@ -107,7 +107,8 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
         'opportunities': enriched,
         'relative_value': relative,
         'history_points': len(history),
-        'depth_coverage': 'SIG_FULL_RELAY_BOOKS_PLUS_BOUNDED_KALSHI_AND_POLYMARKET_BOOKS',
+        'depth_coverage': 'SIG_FULL_RELAY_BOOKS_PLUS_ALL_RETURNED_KALSHI_AND_POLYMARKET_BOOKS',
+        'book_coverage': {venue: data.get('book_coverage', 'UNKNOWN') for venue, data in payload.items()},
         'fees': {'sig': 'dashboard input', 'kalshi': 'unverified', 'polymarket': 'unverified'},
         'research_only': True,
     }
