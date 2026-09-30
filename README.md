@@ -254,6 +254,18 @@ The no-order paper/shadow runner is `paper.py`; it journals simulated fills,
 partial-fill residuals, and reconciliation status, and honors the file-based
 kill switch at `logs/KILL_SWITCH`.
 
+For continuous local levels capture and research alerts, run:
+
+```bash
+PYTHONPATH=. python3 levels_daemon.py --interval 60
+```
+
+This stores every targeted Kalshi and Polymarket ladder in
+`logs/levels.sqlite3` and appends data-quality or approved movement alerts to
+`logs/levels-alerts.jsonl`. It evaluates from the local database and sends no
+orders. Movement alerts require an explicitly approved mapping and a fresh SIG
+browser snapshot.
+
 Run `PYTHONPATH=. python3 system_check.py` before a session for a read-only
 readiness report. Paper readiness stays false until a fresh SIG snapshot and a
 complete public venue coverage check have both passed; use `--sig-snapshot

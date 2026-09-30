@@ -34,6 +34,18 @@ The file contains native market metadata, observations, order-book ladders,
 timestamps, and explicit missing-market/book coverage. It is read-only and
 does not place orders.
 
+For persistent collection and local alert evaluation, use the daemon:
+
+```bash
+PYTHONPATH=. python3 levels_daemon.py --interval 60
+```
+
+It writes normalized ladders to `logs/levels.sqlite3` and alerts to
+`logs/levels-alerts.jsonl`. Run it under the machine's process supervisor for
+automatic restart. With the production mapping registry empty, it will store
+levels and report data-quality failures but will not create cross-venue trade
+alerts.
+
 The dashboard shows SIG signals, venue coverage, mapped/approved counts,
 movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes
 the raw public inventory for inspection. Public venue depth is explicitly
