@@ -79,5 +79,10 @@ through certification and contractual resolution, then reconcile final
 settlements and capital separately from election-night prices.
 
 The normalized reconciliation contract is implemented in `reconciliation.py`.
-It compares positions, open orders, and cash independently and requests the
-kill switch whenever any component is outside tolerance.
+SIG account data can be normalized through the read-only adapter in
+`portfolio.py`; unknown holding or order shapes are retained as `unparsed` and
+force `UNVERIFIED_SCHEMA` rather than being treated as zero. Kalshi and
+Polymarket account adapters remain separate authenticated integration work.
+The reconciler compares positions, open orders, and cash independently and
+requests the kill switch whenever any component is outside tolerance or the
+account schema is not verified.

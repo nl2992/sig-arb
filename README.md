@@ -123,6 +123,13 @@ Both commands fail closed with `STALE_SIG_SNAPSHOT` after 30 seconds without a
 fresh relay payload. The relay only reads market data; execution remains
 dry-run and requires separate order-payload verification.
 
+Portfolio reconciliation is deliberately separate from market-data ingestion.
+`portfolio.py` normalizes read-only SIG holdings, open orders, and balance for
+the reconciliation contract. Unrecognized account rows are preserved as
+`unparsed` and produce `UNVERIFIED_SCHEMA` with a kill-switch requirement;
+Kalshi and Polymarket account reads remain gated until their authenticated
+schemas and credentials are verified.
+
 ### Control-market guardrails
 
 `control_model.py` records the unresolved 50-50 Senate interpretation, the
