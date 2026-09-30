@@ -88,6 +88,11 @@ class DashboardTests(unittest.TestCase):
         data = report(self.snapshot, {'roi': ['0']})
         self.assertTrue(all(row['news_status'] == 'CLEAR' for row in data['signals']))
 
+    def test_signal_freshness_is_derived_from_snapshot_timestamp(self):
+        data = report(self.snapshot, {'roi': ['0']})
+        self.assertGreater(data['signals'][0]['freshness_seconds'], 0)
+        self.assertIn('STALE_SIG_SNAPSHOT', data['signals'][0]['execution_risk'])
+
 
 if __name__ == '__main__':
     unittest.main()

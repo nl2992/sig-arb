@@ -27,6 +27,13 @@ ROOT = Path(__file__).parent
 NEWS_BREAKERS = ROOT / 'config' / 'news_circuit_breakers.json'
 
 
+def _snapshot_age_seconds(snapshot):
+    observed = dt.datetime.fromisoformat(snapshot.ts.replace('Z', '+00:00'))
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=dt.timezone.utc)
+    return max(0.0, (dt.datetime.now(dt.timezone.utc) - observed).total_seconds())
+
+
 def _read_history(path=ROOT / 'logs' / 'crossvenue-history.jsonl'):
     if not path.exists():
         return []
@@ -132,6 +139,7 @@ def report(snapshot, params, crossvenue=None):
     edge = number("edge", 0)
     minimum = number("profit", 1)
     min_roi = number("roi", 5) / 100
+    snapshot_age = _snapshot_age_seconds(snapshot)
     groups = group_markets(snapshot.markets)
     exhaustive = load_exhaustive()
     breakers = active_breakers(NEWS_BREAKERS)
@@ -147,7 +155,7 @@ def report(snapshot, params, crossvenue=None):
             race=r.race, direction=r.direction, qty=r.qty, profit=r.pnl,
             capital=r.capital, roi=r.roi, edge=r.avg_edge,
             top_edge=r.top_edge, marginal_edge=r.marginal_edge,
-            freshness_seconds=0,
+            freshness_seconds=round(snapshot_age, 3),
             mapping_status='LOCAL_SIG', settlement_status='SIG_RULES_UNVERIFIED',
             fee_assumption=fee,
             execution_risk=['PARTIAL_FILL', 'QUOTE_AGE_CHECK_REQUIRED'],
@@ -161,6 +169,8 @@ def report(snapshot, params, crossvenue=None):
                        limit=1-l.limit if no else l.limit) for l in r.legs])
         if row['news_status'] == 'ACTIVE_CIRCUIT_BREAKER':
             row['execution_risk'].append('NEWS_CIRCUIT_BREAKER')
+        if snapshot_age > 30:
+            row['execution_risk'].append('STALE_SIG_SNAPSHOT')
         if r.pnl >= minimum and r.roi + 1e-12 >= min_roi:
             rows.append(row)
         elif r.pnl >= minimum:
