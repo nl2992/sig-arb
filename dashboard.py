@@ -15,7 +15,7 @@ from sig_client import Client
 from kelly import size_position
 from news import fetch_news
 from signals import Snapshot, load_exhaustive, scan_diagnostics
-from crossvenue_adapters import fetch_public, load_targeted_market_ids
+from crossvenue_adapters import fetch_public, load_market_links, load_targeted_market_ids
 from crossvenue_models import PriceObservation
 from market_matches import load_registry
 from movement_scanner import scan_movements
@@ -106,11 +106,16 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     market_counts = {venue: len(data.get('markets', [])) for venue, data in payload.items()}
     observation_counts = {venue: len(data.get('observations', [])) for venue, data in payload.items()}
     approved = [m for m in matches if m.status == 'APPROVED']
+    link_rows = load_market_links(ROOT / 'docs' / 'market-links.csv')
     return {
         'market_counts': market_counts,
         'observation_counts': observation_counts,
         'book_counts': {venue: len(data.get('books', [])) for venue, data in payload.items()},
-        'mapping_counts': {'discovered': len(matches), 'approved': len(approved)},
+        'mapping_counts': {'discovered': len(link_rows), 'registry_rows': len(matches), 'approved': len(approved)},
+        'mapping_candidates': [{k: row.get(k) for k in (
+            'sig_market_id', 'event', 'sig_url', 'kalshi_market_id', 'kalshi_url',
+            'polymarket_market_id', 'polymarket_url', 'status')}
+            for row in link_rows],
         'movement': movement,
         'opportunities': enriched,
         'relative_value': relative,

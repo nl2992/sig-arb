@@ -30,6 +30,11 @@ def load_targeted_market_ids(path="docs/market-links.csv") -> dict[str, list[str
     return result
 
 
+def load_market_links(path="docs/market-links.csv") -> list[dict]:
+    with open(path, newline="") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
+
+
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 

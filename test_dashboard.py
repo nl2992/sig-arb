@@ -75,7 +75,9 @@ class DashboardTests(unittest.TestCase):
         }
         data = report(self.snapshot, {'roi': ['0']}, payload)
         self.assertEqual({'kalshi': 1, 'polymarket': 1}, data['crossvenue']['market_counts'])
-        self.assertEqual({'discovered': 0, 'approved': 0}, data['crossvenue']['mapping_counts'])
+        self.assertEqual(237, data['crossvenue']['mapping_counts']['discovered'])
+        self.assertEqual(0, data['crossvenue']['mapping_counts']['approved'])
+        self.assertEqual(237, len(data['crossvenue']['mapping_candidates']))
         json.dumps(data, allow_nan=False)
 
     def test_replay_portfolio_state_is_explicit(self):
