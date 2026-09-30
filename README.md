@@ -242,3 +242,9 @@ the response labels that inventory coverage accordingly.
 The no-order paper/shadow runner is `paper.py`; it journals simulated fills,
 partial-fill residuals, and reconciliation status, and honors the file-based
 kill switch at `logs/KILL_SWITCH`.
+
+Run `PYTHONPATH=. python3 system_check.py` before a session for a read-only
+readiness report. Use `--sig-snapshot logs/browser_snapshot.json` to check
+relay freshness or `--public` to include current venue coverage. The report
+always keeps `ready_for_live` false until the separate execution gates are
+explicitly verified.
