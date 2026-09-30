@@ -38,9 +38,15 @@ class DashboardTests(unittest.TestCase):
 
     def test_net_roi_hurdle(self):
         self.assertEqual(report(self.snapshot, {})['signals'], [])
+        self.assertEqual(report(self.snapshot, {'roi': ['5']})['signals'], [])
         rows = report(self.snapshot, {'roi': ['3.1']})['signals']
         self.assertEqual([r['race'] for r in rows], ['Synthetic Senate'])
         self.assertEqual(report(self.snapshot, {'roi': ['3.1'], 'fee': ['0.01']})['signals'], [])
+
+    def test_overall_cap_limits_each_punt(self):
+        rows = report(self.snapshot, {'roi': ['0'], 'capital': ['2000'], 'cap_pct': ['5']})['signals']
+        self.assertTrue(rows)
+        self.assertTrue(all(r['capital'] <= 100 for r in rows))
 
     def test_buy_yes_requires_exhaustive_allowlist(self):
         with patch('dashboard.load_exhaustive', return_value=set()):

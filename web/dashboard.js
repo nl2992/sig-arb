@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 const fmt=(n,d=2)=>Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data=null, selected=null, busy=false, failed=false;
-let params=new URLSearchParams({fee:'0',edge:'0',profit:'1',budget:'0',roi:'10'});
+let params=new URLSearchParams({fee:'0',edge:'0',profit:'1',budget:'0',capital:'0',cap_pct:'5',roi:'5'});
 function filtered(){return (data?.signals||[]).filter(r=>r.race.toLowerCase().includes($('search').value.toLowerCase())).sort((a,b)=>b[$('sort').value]-a[$('sort').value]);}
 function render(){
  if(!data)return;
@@ -15,7 +15,7 @@ function render(){
  $('coverage').textContent=data.markets;
  $('races').textContent=data.races+' races';
  $('time').textContent='Snapshot '+new Date(data.ts).toLocaleTimeString();
- $('scope').textContent=`${data.exhaustive} exhaustive races · ${data.exhaustive?'YES + NO positions':'NO positions only'} · ${data.budget?'Cap '+fmt(data.budget,0)+'/race':'Capital uncapped'}`;
+ $('scope').textContent=`${data.exhaustive} exhaustive races · ${data.exhaustive?'YES + NO positions':'NO positions only'} · ${data.budget?'Cap '+fmt(data.budget,0)+'/punt':'Capital cap unset'}`;
  const rows=filtered();
  $('rows').innerHTML=rows.length?rows.map((r,i)=>`<tr class="${selected===r.race+r.direction?'selected':''}"><td><strong>${esc(r.race)}</strong><small>${r.direction==='SELL_ALL'?'Buy NO across all legs':'Buy YES across all legs'}</small></td><td class="positive">+${fmt(r.profit)}</td><td>${fmt(r.vwap,4)}</td><td class="positive">${fmt(r.edge*100)}¢</td><td>${fmt(r.roi*100)}%</td><td>${fmt(r.qty,0)}</td><td>${fmt(r.capital)}</td><td><button data-row="${i}" aria-label="Inspect ${esc(r.race)}">Details</button></td></tr>`).join(''):'<tr><td colspan="8" class="empty">No executable opportunities match these filters.</td></tr>';
  document.querySelectorAll('[data-row]').forEach(b=>b.onclick=()=>{selected=rows[+b.dataset.row].race+rows[+b.dataset.row].direction;render();});
@@ -28,7 +28,7 @@ function render(){
 function draw(r){const c=$('chart');if(!c)return;const rect=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;c.width=rect.width*dpr;c.height=175*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);const w=rect.width,h=175;x.strokeStyle='#e0e7e2';for(let i=0;i<4;i++){x.beginPath();x.moveTo(0,i*50+15);x.lineTo(w,i*50+15);x.stroke();}const pts=[{cum_qty:0,cum_pnl:0},...r.steps];x.beginPath();pts.forEach((p,i)=>{const a=8+p.cum_qty/r.qty*(w-16),b=h-10-p.cum_pnl/r.profit*(h-25);i?x.lineTo(a,b):x.moveTo(a,b)});x.strokeStyle='#159563';x.lineWidth=2.5;x.stroke();x.lineTo(w-8,h-10);x.lineTo(8,h-10);x.closePath();x.fillStyle='rgba(21,149,99,.08)';x.fill();}
 function freshness(){if(!data)return;const age=(Date.now()-Date.parse(data.ts))/1000;$('status').textContent=failed?'Scan failed · stale':data.mode==='replay'?'Replay data':age>60?'Stale snapshot':'Live · read only';$('status').style.color=failed||age>60?'#a2612e':'#19744b';}
 async function refresh(){if(busy)return;busy=true;$('refresh').disabled=true;$('status').textContent='Scanning…';try{const response=await fetch('/api/signals?'+params,{signal:AbortSignal.timeout(120000)});const result=await response.json();if(!response.ok)throw Error(result.error||'Scan failed');data=result;failed=false;$('error').hidden=true;if(selected===null&&data.signals.length)selected=data.signals[0].race+data.signals[0].direction;render();}catch(e){failed=true;$('error').textContent=e.message+' Last successful results, if present, are retained.';$('error').hidden=false;$('status').textContent='Scan failed';freshness();}finally{busy=false;$('refresh').disabled=false;}}
-$('filters').onsubmit=e=>{e.preventDefault();if(busy)return;params=new URLSearchParams(Object.fromEntries(['fee','budget','edge','profit','roi'].map(k=>[k,$(k).value||'0'])));refresh();};
+$('filters').onsubmit=e=>{e.preventDefault();if(busy)return;params=new URLSearchParams(Object.fromEntries(['fee','budget','capital','cap_pct','edge','profit','roi'].map(k=>[k,$(k).value||'0'])));refresh();};
 $('refresh').onclick=refresh;$('search').oninput=render;$('sort').onchange=render;
 window.addEventListener('resize',()=>{const r=data?.signals.find(r=>r.race+r.direction===selected);if(r)draw(r)});
 setInterval(()=>{if($('auto').checked&&!document.hidden)refresh();},30000);setInterval(()=>{if(!busy)freshness();},5000);refresh();

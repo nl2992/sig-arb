@@ -26,6 +26,11 @@ def report(snapshot, params):
 
     fee = number("fee", 0)
     budget = number("budget", 0)
+    overall = number("capital", 0)
+    cap_pct = number("cap_pct", 5) / 100
+    if overall and cap_pct:
+        per_punt = overall * cap_pct
+        budget = min(budget, per_punt) if budget else per_punt
     edge = number("edge", 0)
     minimum = number("profit", 1)
     min_roi = number("roi", 10) / 100
@@ -65,6 +70,7 @@ def report(snapshot, params):
     near.sort(key=lambda r: -r["edge"])
     return dict(ts=snapshot.ts, markets=len(snapshot.markets), races=len(groups),
                 exhaustive=len(exhaustive), fee=fee, budget=budget,
+                overall_capital=overall, cap_pct=cap_pct,
                 signals=rows, near=near[:12],
                 markets_list=[dict(id=m['id'], title=m['title']) for m in snapshot.markets])
 
