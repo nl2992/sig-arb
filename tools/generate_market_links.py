@@ -13,6 +13,7 @@ from sig_client import Client
 
 SIG_BASE = "https://sig.thesuper.market/markets"
 POLYMARKET_BASE = "https://gamma-api.polymarket.com"
+KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 
 def _polymarket_inventory() -> list[dict]:
@@ -73,6 +74,56 @@ def _polymarket_candidates(title: str, inventory: list[dict]) -> list[dict]:
     return candidates
 
 
+def _kalshi_inventory() -> list[dict]:
+    """Fetch Kalshi's event feed, which contains the election markets."""
+    events = []
+    cursor = ""
+    for _ in range(100):
+        params = {"limit": 200, "with_nested_markets": "true"}
+        if cursor:
+            params["cursor"] = cursor
+        response = requests.get(f"{KALSHI_BASE}/events", params=params, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+        page = payload.get("events", [])
+        events.extend(row for row in page if isinstance(row, dict))
+        cursor = payload.get("cursor", "")
+        if not cursor or not page:
+            break
+    return events
+
+
+def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
+    match = re.fullmatch(
+        r"Will the (Republican|Democratic|Independent) Party win the (.+) (Senate|Governor)\?",
+        title,
+    )
+    if not match:
+        return []
+    party, state, chamber = (part.lower() for part in match.groups())
+    event_title = f"{state} {chamber} winner?".lower()
+    candidates = []
+    for event in inventory:
+        if str(event.get("title", "")).lower() != event_title:
+            continue
+        if "2026" not in str(event.get("sub_title", "")) and "2026" not in str(event.get("event_ticker", "")):
+            continue
+        for market in event.get("markets", []):
+            label = " ".join(
+                str(market.get(key, "")) for key in ("yes_sub_title", "title")
+            ).lower()
+            if party not in label:
+                continue
+            series = str(event.get("series_ticker", "")).lower()
+            slug = re.sub(r"[^a-z0-9]+", "-", str(event.get("title", "")).lower()).strip("-")
+            candidates.append({
+                "id": str(market.get("ticker")),
+                "event": str(event.get("event_ticker")),
+                "url": f"https://kalshi.com/markets/{series}/{slug}",
+            })
+    return candidates
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="docs/market-links.md")
@@ -80,11 +131,17 @@ def main() -> None:
 
     markets = sorted(Client().markets(), key=lambda row: int(row["id"]), reverse=True)
     polymarket = _polymarket_inventory()
+    kalshi = _kalshi_inventory()
     polymarket_map = {
         int(market["id"]): _polymarket_candidates(str(market.get("title", "")), polymarket)
         for market in markets
     }
-    pm_count = sum(bool(rows) for rows in polymarket_map.values())
+    kalshi_map = {
+        int(market["id"]): _kalshi_candidates(str(market.get("title", "")), kalshi)
+        for market in markets
+    }
+    pm_count = sum(len(rows) == 1 for rows in polymarket_map.values())
+    kalshi_count = sum(len(rows) == 1 for rows in kalshi_map.values())
     lines = [
         "# SIG Market Links",
         "",
@@ -92,6 +149,7 @@ def main() -> None:
         "",
         f"Generated: `{dt.datetime.now(dt.timezone.utc).isoformat()}`",
         f"Market count: **{len(markets)}**",
+        f"Kalshi candidate links found: **{kalshi_count}**",
         f"Polymarket candidate links found: **{pm_count}**",
         "Production cross-venue mappings: **0 approved** (the registry remains intentionally empty until settlement rules are manually verified).",
         "",
@@ -105,7 +163,7 @@ def main() -> None:
         "",
         "## Three-Venue Mapping Table",
         "",
-        "Each row has the intended SIG, Kalshi, and Polymarket slots. Polymarket links marked `candidate` are title/market-structure matches found through the public API and still require settlement review. Kalshi is shown as unresolved where no corresponding contract was found in the current public open-market inventory.",
+        "Each row has the intended SIG, Kalshi, and Polymarket slots. Links marked `candidate` are title/market-structure matches found through the public APIs and still require settlement review.",
         "",
         "| SIG ID | Event | SIG | Kalshi | Polymarket | Status |",
         "|---:|---|---|---|---|---|",
@@ -115,17 +173,22 @@ def main() -> None:
         title = str(market.get("title", "")).replace("|", "\\|")
         sig_link = f"[SIG]({SIG_BASE}/{market_id})"
         candidates = polymarket_map[market_id]
+        kalshi_candidates = kalshi_map[market_id]
+        if len(kalshi_candidates) == 1:
+            kalshi_link = f"[candidate]({kalshi_candidates[0]['url']})"
+        else:
+            kalshi_link = "Not found"
         if len(candidates) == 1:
             poly_link = f"[candidate]({candidates[0]['url']})"
-            status = "Polymarket candidate; Kalshi unresolved"
+            status = "Both venue candidates; review"
         elif len(candidates) > 1:
             poly_link = "Ambiguous candidates"
             status = "Manual review required"
         else:
             poly_link = "Not found"
-            status = "No venue match found"
+            status = "Kalshi candidate; Polymarket unresolved" if len(kalshi_candidates) == 1 else "No venue match found"
         lines.append(
-            f"| {market_id} | {title} | {sig_link} | Not found | {poly_link} | {status} |"
+            f"| {market_id} | {title} | {sig_link} | {kalshi_link} | {poly_link} | {status} |"
         )
 
     lines += [
