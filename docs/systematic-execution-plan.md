@@ -77,3 +77,7 @@ open orders. On mismatch: stop new orders, cancel where safe, record the
 residual, and require operator review. After the election, keep monitoring
 through certification and contractual resolution, then reconcile final
 settlements and capital separately from election-night prices.
+
+The normalized reconciliation contract is implemented in `reconciliation.py`.
+It compares positions, open orders, and cash independently and requests the
+kill switch whenever any component is outside tolerance.
