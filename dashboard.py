@@ -95,6 +95,10 @@ class Source:
             raise ValueError('Snapshot must include markets and levels')
         if len(markets) > 1000 or len(levels) > 1000:
             raise ValueError('Snapshot is too large')
+        if any(not isinstance(m, dict) or 'id' not in m or 'title' not in m for m in markets):
+            raise ValueError('Snapshot contains an invalid market')
+        if any(not isinstance(v, list) for v in levels.values()):
+            raise ValueError('Snapshot contains invalid order levels')
         snapshot = Snapshot(
             payload.get('ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
             markets, {int(k): v for k, v in levels.items()})

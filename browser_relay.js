@@ -8,6 +8,7 @@
     let markets = [], offset = 0;
     while (offset != null) {
       const j = await (await fetch(`${base}/api/markets/page-data?offset=${offset}`)).json();
+      if (!Array.isArray(j.markets)) throw new Error('Market page response has no markets array');
       markets.push(...j.markets);
       offset = j.markets.length ? j.nextOffset : null;
     }
@@ -15,6 +16,7 @@
     for (let i = 0; i < markets.length; i += 10) {
       await Promise.all(markets.slice(i, i + 10).map(async m => {
         const j = await (await fetch(`${base}/api/markets/${m.id}/orders?marketId=${m.id}&tournamentId=${T}`)).json();
+        if (!Array.isArray(j.levels)) throw new Error(`Order response has no levels array for ${m.id}`);
         levels[m.id] = j.levels;
       }));
     }
@@ -22,7 +24,9 @@
     const sent = await fetch('http://127.0.0.1:8876/api/browser_snapshot', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
     });
-    console.log('SIG dashboard relay', await sent.json());
+    const result = await sent.json();
+    if (!sent.ok) throw new Error(result.error || `Dashboard returned ${sent.status}`);
+    console.log('SIG dashboard relay', result);
   }
   await snapshot();
   window.sigDashboardRelay = setInterval(snapshot, 15000);
