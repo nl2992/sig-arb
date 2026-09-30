@@ -68,6 +68,16 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('liquidity', data)
         json.dumps(data, allow_nan=False)
 
+    def test_crossvenue_coverage_is_included_in_dashboard_report(self):
+        payload = {
+            'kalshi': {'markets': [{'ticker': 'KX1'}], 'observations': []},
+            'polymarket': {'markets': [{'id': 'P1'}], 'observations': []},
+        }
+        data = report(self.snapshot, {'roi': ['0']}, payload)
+        self.assertEqual({'kalshi': 1, 'polymarket': 1}, data['crossvenue']['market_counts'])
+        self.assertEqual({'discovered': 0, 'approved': 0}, data['crossvenue']['mapping_counts'])
+        json.dumps(data, allow_nan=False)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -13,11 +13,60 @@ from sig_client import Client
 from kelly import size_position
 from news import fetch_news
 from signals import Snapshot, load_exhaustive, scan_diagnostics
+from crossvenue_adapters import fetch_public
+from crossvenue_models import PriceObservation
+from market_matches import load_registry
+from movement_scanner import scan_movements
+from relative_value import scan_pairs
 
 ROOT = Path(__file__).parent
 
 
-def report(snapshot, params):
+def _read_history(path=ROOT / 'logs' / 'crossvenue-history.jsonl'):
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossvenue/matches.json'):
+    payload = payload or {}
+    observations = [PriceObservation(**row)
+                    for venue in payload.values()
+                    for row in venue.get('observations', [])]
+    try:
+        matches = load_registry(matches_path)
+    except (OSError, ValueError):
+        matches = []
+    history = _read_history()
+    historical = [PriceObservation(
+        venue=row['reference_venue'], market_id=row['reference_market_id'],
+        outcome_id=row['reference_outcome_id'], observed_at=row['observed_at'],
+        last=row['reference_price'], source='crossvenue-history', price_basis='last')
+        for row in history if row.get('reference_price') is not None]
+    all_observations = historical + observations
+    movement = scan_movements(snapshot, all_observations, matches).to_dict()
+    relative = scan_pairs(history, matches)
+    market_counts = {venue: len(data.get('markets', [])) for venue, data in payload.items()}
+    observation_counts = {venue: len(data.get('observations', [])) for venue, data in payload.items()}
+    approved = [m for m in matches if m.status == 'APPROVED']
+    return {
+        'market_counts': market_counts,
+        'observation_counts': observation_counts,
+        'mapping_counts': {'discovered': len(matches), 'approved': len(approved)},
+        'movement': movement,
+        'relative_value': relative,
+        'history_points': len(history),
+        'research_only': True,
+    }
+
+
+def report(snapshot, params, crossvenue=None):
     def number(name, default):
         value = float(params.get(name, [default])[0])
         if not math.isfinite(value) or value < 0:
@@ -70,6 +119,7 @@ def report(snapshot, params):
                 punts=punts[:25],
                 diagnostics=scan_report.diagnostics,
                 liquidity=scan_report.liquidity,
+                crossvenue=_crossvenue_report(snapshot, crossvenue),
                 markets_list=[dict(id=m['id'], title=m['title']) for m in snapshot.markets])
 
 
@@ -80,6 +130,8 @@ class Source:
         self.snapshot = None
         self.fetched = 0
         self.news_cache = {}
+        self.crossvenue_cache = None
+        self.crossvenue_fetched = 0
 
     def accept_browser_snapshot(self, payload):
         markets = payload.get('markets')
@@ -122,6 +174,15 @@ class Source:
                 self.snapshot = snapshot
                 self.fetched = time.monotonic()
             return self.snapshot
+
+    def get_crossvenue(self):
+        with self.lock:
+            if self.replay:
+                return {}
+            if self.crossvenue_cache is None or time.monotonic() - self.crossvenue_fetched >= 60:
+                self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], 1000)
+                self.crossvenue_fetched = time.monotonic()
+            return self.crossvenue_cache
 
 
 def handler(source):
@@ -170,13 +231,18 @@ def handler(source):
                                              float(params.get('fee', ['0'])[0]))
                         data['ts'] = snapshot.ts
                     else:
-                        data = report(snapshot, params)
+                        data = report(snapshot, params, source.get_crossvenue())
                     data["mode"] = "replay" if source.replay else "live"
                     self.send_body(200, json.dumps(data, allow_nan=False).encode(), "application/json")
                 except ValueError as exc:
                     self.send_body(400, json.dumps({"error": str(exc)}).encode(), "application/json")
                 except Exception:
                     self.send_body(502, b'{"error":"Market data unavailable. Retry the scan."}', "application/json")
+            elif url.path == '/api/crossvenue':
+                try:
+                    self.send_body(200, json.dumps(source.get_crossvenue(), allow_nan=False).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"Cross-venue data unavailable. Retry the scan."}', 'application/json')
             elif url.path in ("/", "/dashboard.css", "/dashboard.js"):
                 file = "dashboard.html" if url.path == "/" else url.path[1:]
                 mime = {"html": "text/html", "css": "text/css", "js": "application/javascript"}

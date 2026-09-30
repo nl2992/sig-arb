@@ -14,6 +14,15 @@ function render(){
  $('edgeStat').textContent=fmt(Math.max(0,...data.signals.map(r=>r.edge))*100,2)+'¢';
  $('coverage').textContent=data.markets;
  $('races').textContent=data.races+' races';
+ const cv=data.crossvenue||{};
+ $('kalshiCoverage').textContent=fmt(cv.market_counts?.kalshi||0,0);
+ $('polyCoverage').textContent=fmt(cv.market_counts?.polymarket||0,0);
+ $('mappingCoverage').textContent=`${cv.mapping_counts?.discovered||0} / ${cv.mapping_counts?.approved||0}`;
+ $('movementCount').textContent=fmt(cv.movement?.candidates?.length||0,0);
+ $('relativeCount').textContent=fmt((cv.relative_value||[]).filter(r=>r.status==='RESEARCH_CANDIDATE').length,0);
+ $('crossvenueStatus').textContent=`${cv.observation_counts?.kalshi||0} Kalshi observations · ${cv.observation_counts?.polymarket||0} Polymarket observations · ${cv.history_points||0} stored history points · research only`;
+ const cross=[...(cv.movement?.candidates||[]).map(r=>({...r,kind:'movement'})),...(cv.relative_value||[]).filter(r=>r.status==='RESEARCH_CANDIDATE').map(r=>({...r,kind:'relative value'}))];
+ $('crossvenueRows').innerHTML=cross.length?cross.slice(0,12).map(r=>`<div class="near-item"><span><strong>${esc(r.kind)}</strong> · SIG ${esc(r.sig_market_id)}</span><span>${r.kind==='movement'?`${esc(r.direction)} ${fmt(r.movement_pp)}pp / gap ${fmt(r.gap_pp)}pp`:`z ${fmt(r.z_score)}`}</span></div>`).join(''):'<p>No review-gated cross-venue candidates in this snapshot.</p>';
  $('time').textContent='Snapshot '+new Date(data.ts).toLocaleTimeString();
  $('scope').textContent=`${data.exhaustive} exhaustive races · ${data.exhaustive?'YES + NO positions':'NO positions only'} · ${data.budget?'Cap '+fmt(data.budget,0)+'/punt':'Capital cap unset'}`;
  const rows=filtered();

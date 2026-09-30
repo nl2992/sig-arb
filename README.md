@@ -205,3 +205,7 @@ PYTHONPATH=. python3 tools/generate_market_links.py
 The generator queries Kalshi's paginated events feed with nested markets and
 Polymarket's active market feed. Links are discovery candidates until contract
 rules, resolution sources, timing, and outcome semantics have been reviewed.
+
+The recurring workflow and staged execution gates are documented in
+[docs/operating-guide.md](docs/operating-guide.md) and
+[docs/systematic-execution-plan.md](docs/systematic-execution-plan.md).
