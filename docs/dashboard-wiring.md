@@ -215,6 +215,17 @@ working: `/api/signals`, `/api/crossvenue`, `/api/portfolio`, `/api/news`,
 
 ### Phase 1: read-only (Stage 0/1)
 
+**Status: implemented (step 3).** `opportunities.py` now normalizes the
+existing SIG scanner and approved cross-venue research output into server-
+decided opportunity states. `GET /api/opportunities` and its detail route
+return gate snapshots and block reasons; `GET /api/books/{venue}/{market_id}`
+returns the SIG snapshot or the latest read-only SQLite capture; and
+`GET /api/history/{market_id}` returns stored observations with missing values
+left as `null`. No endpoint writes the levels database or sends an order.
+The dashboard renders the normalized state alongside the existing scanner.
+Cross-venue rows remain research-only while the mapping registry is empty or
+unapproved.
+
 | Endpoint | Built from |
 |---|---|
 | `GET /api/status` | Snapshot age, `levels.sqlite3` last capture, portfolio status, `KILL_SWITCH`, `PLACE_PAYLOAD_CONFIRMED`, active breakers, mode, system-level gates, feed ages |

@@ -558,8 +558,100 @@ def handler(source, action_token=None, actions=None):
                     self.send_body(200, json.dumps(source.get_portfolio(), allow_nan=False).encode(), 'application/json')
                 except Exception:
                     self.send_body(502, b'{"error":"Portfolio state unavailable. Retry the reconciliation check."}', 'application/json')
-            elif url.path in ("/", "/dashboard.css", "/dashboard.js", "/status.js"):
+            elif url.path == '/api/opportunities' or url.path.startswith('/api/opportunities/'):
+                try:
+                    from opportunities import get_opportunity, list_opportunities
+                    if url.path == '/api/opportunities':
+                        params = parse_qs(url.query)
+                        strategy = params.get('strategy', [None])[0]
+                        state = params.get('state', [None])[0]
+                        search = params.get('search', [None])[0]
+                        if strategy is not None and strategy not in {'sig_arb', 'complete_set', 'xv_move', 'rel_value'}:
+                            raise ValueError('Unknown strategy')
+                        if state is not None and state not in {'blocked', 'research_only', 'paper_eligible', 'not_ready', 'exec_ready'}:
+                            raise ValueError('Unknown state')
+                        if search is not None and len(search) > 120:
+                            raise ValueError('Search is too long')
+                        data = list_opportunities(source, strategy=strategy, state=state, search=search)
+                    else:
+                        opportunity_id = url.path[len('/api/opportunities/'):]
+                        if not opportunity_id or '/' in opportunity_id:
+                            raise ValueError('Invalid opportunity id')
+                        qty = parse_qs(url.query).get('qty', [None])[0]
+                        if qty is not None:
+                            try:
+                                qty = float(qty)
+                            except ValueError as exc:
+                                raise ValueError('Invalid quantity') from exc
+                            if not math.isfinite(qty) or qty <= 0:
+                                raise ValueError('Invalid quantity')
+                        data = get_opportunity(source, opportunity_id, qty)
+                        if data is None:
+                            self.send_body(404, b'{"error":"Opportunity not found."}', 'application/json')
+                            return
+                    self.send_body(200, json.dumps(data, allow_nan=False).encode(), 'application/json')
+                except ValueError as exc:
+                    self.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"Opportunity data unavailable. Retry the scan."}', 'application/json')
+            elif url.path.startswith('/api/books/'):
+                try:
+                    from opportunities import read_book
+                    parts = url.path.split('/')
+                    if len(parts) != 5 or not parts[3] or not parts[4]:
+                        raise ValueError('Expected /api/books/{venue}/{market_id}')
+                    data = read_book(source, parts[3], parts[4])
+                    self.send_body(200, json.dumps(data, allow_nan=False).encode(), 'application/json')
+                except ValueError as exc:
+                    self.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"Book data unavailable. Retry the scan."}', 'application/json')
+            elif url.path.startswith('/api/history/'):
+                try:
+                    from opportunities import read_history
+                    market_id = url.path[len('/api/history/'):]
+                    if not market_id or '/' in market_id:
+                        raise ValueError('Invalid market id')
+                    params = parse_qs(url.query)
+                    venue = params.get('venue', [None])[0]
+                    outcome = params.get('outcome', ['YES'])[0].upper()
+                    if venue is not None and venue.lower() not in {'kalshi', 'polymarket'}:
+                        raise ValueError('Invalid venue')
+                    if outcome not in {'YES', 'NO'}:
+                        raise ValueError('Invalid outcome')
+                    try:
+                        limit = int(params.get('limit', ['300'])[0])
+                    except ValueError as exc:
+                        raise ValueError('Invalid limit') from exc
+                    if limit < 1 or limit > 1000:
+                        raise ValueError('Limit must be between 1 and 1000')
+                    start = params.get('from', [None])[0]
+                    end = params.get('to', [None])[0]
+                    for stamp in (start, end):
+                        if stamp:
+                            try:
+                                dt.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+                            except ValueError as exc:
+                                raise ValueError('Invalid timestamp') from exc
+                    data = read_history(source, market_id, venue, outcome, start, end, limit)
+                    self.send_body(200, json.dumps(data, allow_nan=False).encode(), 'application/json')
+                except ValueError as exc:
+                    self.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"History unavailable. Retry the scan."}', 'application/json')
+            elif url.path == '/api/mappings':
+                try:
+                    from opportunities import mapping_view
+                    self.send_body(200, json.dumps({'mappings': mapping_view(source)}, allow_nan=False).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"Mappings unavailable."}', 'application/json')
+            elif url.path in ("/", "/dashboard.css", "/dashboard.js", "/status.js") or url.path.startswith('/js/'):
                 file = "dashboard.html" if url.path == "/" else url.path[1:]
+                allowed = {"js/api.js", "js/state.js", "js/opportunities.js", "js/drawer.js",
+                           "js/ticket.js", "js/arb-ticket.js", "js/execution.js", "js/account.js"}
+                if file.startswith('js/') and file not in allowed:
+                    self.send_body(404, b"Not found", "text/plain")
+                    return
                 mime = {"html": "text/html", "css": "text/css", "js": "application/javascript"}
                 body = (ROOT / "web" / file).read_bytes()
                 if file == "dashboard.html":
