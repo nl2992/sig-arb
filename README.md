@@ -105,6 +105,15 @@ an explicit race entry in `exhaustive.txt`. This dashboard cannot place orders.
 Offline preview: `python3 dashboard.py --port 8877 --replay fixtures/sample_snapshot.json`.
 Dashboard checks: `python3 -m unittest test_dashboard`.
 
+### Control-market guardrails
+
+`control_model.py` records the unresolved 50-50 Senate interpretation, the
+Independent-winner case, and the possible Ohio omission. It reports the current
+inventory and deliberately returns `ready_for_riskless_control_arb: false` until
+the organisers answer those wording questions. Its probability-bounds helper is
+only a coarse sanity check; turning race probabilities into Senate-control fair
+value requires a joint simulation with a dependence model.
+
 ### Kelly and News
 
 The probability-value calculator sizes one binary position using an explicit
