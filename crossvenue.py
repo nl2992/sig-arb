@@ -62,6 +62,13 @@ def _live_once(args, cli, markets, matches, history, market_ids=None):
                 "execution_enabled": False,
                 "note": "Research scan blocked until the authenticated SIG snapshot refreshes."}
     public = fetch_public(["kalshi", "polymarket"], args.limit, market_ids=market_ids)
+    age = _snapshot_age_seconds(snap)
+    if args.sig_snapshot and age > args.max_snapshot_age:
+        return {"ts": snap.ts, "status": "STALE_SIG_SNAPSHOT",
+                "snapshot_age_seconds": round(age, 3),
+                "max_snapshot_age": args.max_snapshot_age,
+                "execution_enabled": False,
+                "note": "The SIG snapshot became stale while public venue data was loading."}
     observations = [PriceObservation(**row)
                     for venue in public.values() for row in venue["observations"]]
     wanted = {(m.reference_venue, m.reference_market_id, m.reference_outcome_id.upper())
@@ -91,12 +98,12 @@ def _live_once(args, cli, markets, matches, history, market_ids=None):
     history.extend(pair_rows)
     historical_observations = [PriceObservation(
         venue=row["reference_venue"], market_id=row["reference_market_id"],
-        outcome_id=row["reference_outcome_id"], observed_at=row["observed_at"],
+        outcome_id=row["reference_outcome_id"], observed_at=row["reference_observed_at"],
         source_ts=row.get("reference_source_ts"), bid=row.get("reference_bid"),
         ask=row.get("reference_ask"), last=row["reference_price"],
         source=row.get("reference_source", "crossvenue-history"),
         price_basis=row.get("reference_price_basis") or "last")
-        for row in history if row.get("reference_price") is not None]
+        for row in history if row.get("reference_price") is not None and row.get("reference_observed_at")]
     movement = scan_movements(snap, historical_observations, matches,
                               min_move_pp=args.min_move_pp,
                               lookback_minutes=args.lookback_minutes)

@@ -58,12 +58,12 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     history = _read_history()
     historical = [PriceObservation(
         venue=row['reference_venue'], market_id=row['reference_market_id'],
-        outcome_id=row['reference_outcome_id'], observed_at=row['observed_at'],
+        outcome_id=row['reference_outcome_id'], observed_at=row['reference_observed_at'],
         source_ts=row.get('reference_source_ts'), bid=row.get('reference_bid'),
         ask=row.get('reference_ask'), last=row.get('reference_price'),
         source=row.get('reference_source', 'crossvenue-history'),
         price_basis=row.get('reference_price_basis', 'last'))
-        for row in history if row.get('reference_price') is not None]
+        for row in history if row.get('reference_price') is not None and row.get('reference_observed_at')]
     all_observations = historical + observations
     movement = scan_movements(snapshot, all_observations, matches).to_dict()
     relative = scan_pairs(history, matches)

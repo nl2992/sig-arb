@@ -151,6 +151,8 @@ class KalshiAdapter(PublicAdapter):
             except requests.RequestException:
                 return []
             orderbook = payload.get("orderbook_fp", {}) if isinstance(payload, dict) else {}
+            if not isinstance(orderbook, dict) or not {"yes_dollars", "no_dollars"}.issubset(orderbook):
+                return []
             yes_bids = self._book_levels(orderbook.get("yes_dollars"))
             no_bids = self._book_levels(orderbook.get("no_dollars"))
             observed = _now()
@@ -238,6 +240,8 @@ class PolymarketAdapter(PublicAdapter):
                 try:
                     payload = self._clob_get("/book", token_id=str(token_id))
                 except requests.RequestException:
+                    continue
+                if not isinstance(payload, dict) or "bids" not in payload or "asks" not in payload:
                     continue
                 bids = self._levels(payload.get("bids"))
                 asks = self._levels(payload.get("asks"))
@@ -361,7 +365,12 @@ def fetch_public(venues: Iterable[str], limit: int = 1000, market_ids: dict | No
             ) for o in observation_rows]
         returned_ids = {str(m.market_id) for m in market_rows}
         requested_ids = {str(value) for value in ids} if ids is not None else returned_ids
-        book_ids = {str(book.get("market_id")) for book in books}
+        expected_book_keys = {(str(m.market_id), str(outcome["outcome_id"]).upper())
+                              for m in market_rows for outcome in m.outcomes}
+        returned_book_keys = {(str(book.get("market_id")), str(book.get("outcome_id", "")).upper())
+                              for book in books}
+        missing_book_keys = sorted(expected_book_keys - returned_book_keys)
+        book_ids = {market_id for market_id, _ in returned_book_keys}
         missing_book_ids = sorted(returned_ids - book_ids)
         scope_complete = ids is not None or limit <= 0
         result[venue] = {
@@ -377,8 +386,10 @@ def fetch_public(venues: Iterable[str], limit: int = 1000, market_ids: dict | No
                 "missing_market_ids": sorted(requested_ids - returned_ids),
                 "returned_book_market_count": len(book_ids),
                 "missing_book_market_ids": missing_book_ids,
+                "missing_book_outcomes": [{"market_id": market_id, "outcome_id": outcome_id}
+                                           for market_id, outcome_id in missing_book_keys],
                 "scope_complete": scope_complete,
-                "complete": scope_complete and not (requested_ids - returned_ids) and not missing_book_ids,
+                "complete": scope_complete and not (requested_ids - returned_ids) and not missing_book_keys,
             },
         }
     return result

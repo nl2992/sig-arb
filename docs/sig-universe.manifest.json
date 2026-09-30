@@ -1,0 +1,6 @@
+{
+  "version": "2026-09-30.v1",
+  "source": "docs/market-links.csv",
+  "expected_count": 237,
+  "approval": "reviewed-fixed-research-universe"
+}

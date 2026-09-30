@@ -11,6 +11,7 @@ from market_matches import load_registry
 from news_guard import load_circuit_breakers
 from sig_client import PLACE_PAYLOAD_CONFIRMED
 from signals import Snapshot
+from universe import validate_sig_universe
 
 ROOT = pathlib.Path(__file__).parent
 
@@ -44,8 +45,12 @@ def readiness(*, snapshot_path=None, public=False, public_limit=0,
         try:
             snapshot = Snapshot.load(snapshot_path)
             age = _age(snapshot)
-            checks["sig_snapshot"] = {"status": "PASS" if age <= 30 else "FAIL",
-                                       "age_seconds": round(age, 3), "markets": len(snapshot.markets)}
+            universe = validate_sig_universe(snapshot.markets,
+                                             ROOT / "docs/market-links.csv",
+                                             ROOT / "docs/sig-universe.manifest.json")
+            checks["sig_snapshot"] = {"status": "PASS" if age <= 30 and universe["status"] == "PASS" else "FAIL",
+                                       "age_seconds": round(age, 3), "markets": len(snapshot.markets),
+                                       "universe": universe}
         except Exception as exc:
             checks["sig_snapshot"] = {"status": "FAIL", "error": str(exc)}
     else:

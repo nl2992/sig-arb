@@ -71,6 +71,19 @@ class CrossVenueTests(unittest.TestCase):
         self.assertFalse(result['kalshi']['coverage']['complete'])
         self.assertFalse(result['kalshi']['coverage']['scope_complete'])
 
+    def test_invalid_book_response_is_not_counted_as_empty_liquidity(self):
+        class Fake:
+            def get(self, *args, **kwargs):
+                class Response:
+                    status_code = 200
+                    headers = {}
+                    def raise_for_status(self): pass
+                    def json(self): return {}
+                return Response()
+        adapter = KalshiAdapter(session=Fake())
+        market = MarketMetadata('kalshi', 'KX1', 'E1', 'Q', [{'outcome_id': 'YES'}, {'outcome_id': 'NO'}])
+        self.assertEqual([], adapter.books([market]))
+
     def test_millisecond_timestamps_are_normalized(self):
         self.assertEqual("2026-09-30T00:00:00+00:00", normalize_ts("1790726400000"))
 
