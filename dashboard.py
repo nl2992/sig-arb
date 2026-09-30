@@ -88,6 +88,21 @@ class Source:
         self.fetched = 0
         self.news_cache = {}
 
+    def accept_browser_snapshot(self, payload):
+        markets = payload.get('markets')
+        levels = payload.get('levels')
+        if not isinstance(markets, list) or not isinstance(levels, dict):
+            raise ValueError('Snapshot must include markets and levels')
+        if len(markets) > 1000 or len(levels) > 1000:
+            raise ValueError('Snapshot is too large')
+        snapshot = Snapshot(
+            payload.get('ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
+            markets, {int(k): v for k, v in levels.items()})
+        with self.lock:
+            self.snapshot = snapshot
+            self.fetched = time.monotonic()
+        return {'ok': True, 'markets': len(markets), 'levels': len(levels), 'ts': snapshot.ts}
+
     def news(self, market_id):
         with self.lock:
             if self.replay:
@@ -114,6 +129,22 @@ class Source:
 
 def handler(source):
     class Handler(BaseHTTPRequestHandler):
+        def do_OPTIONS(self):
+            self.send_body(204, b'', 'text/plain')
+
+        def do_POST(self):
+            if urlparse(self.path).path != '/api/browser_snapshot':
+                self.send_body(404, b'Not found', 'text/plain')
+                return
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if length > 20_000_000:
+                    raise ValueError('Snapshot too large')
+                result = source.accept_browser_snapshot(json.loads(self.rfile.read(length)))
+                self.send_body(200, json.dumps(result).encode(), 'application/json')
+            except (ValueError, json.JSONDecodeError) as exc:
+                self.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
+
         def do_GET(self):
             url = urlparse(self.path)
             if url.path in ("/api/signals", "/api/kelly", "/api/news"):
@@ -161,6 +192,8 @@ def handler(source):
             self.send_header("Content-Type", mime + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
             self.wfile.write(body)
 

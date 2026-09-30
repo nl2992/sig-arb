@@ -105,6 +105,13 @@ an explicit race entry in `exhaustive.txt`. This dashboard cannot place orders.
 Offline preview: `python3 dashboard.py --port 8877 --replay fixtures/sample_snapshot.json`.
 Dashboard checks: `python3 -m unittest test_dashboard`.
 
+For browser-authenticated live data, run `browser_relay.js` in the SIG market
+page console. It fetches the same paginated market and order endpoints as the
+supplied export script, sends full levels to `/api/browser_snapshot`, and
+refreshes every 15 seconds. Stop it with
+`clearInterval(window.sigDashboardRelay)`. The relay only reads market data;
+execution remains dry-run and requires separate order-payload verification.
+
 ### Control-market guardrails
 
 `control_model.py` records the unresolved 50-50 Senate interpretation, the
