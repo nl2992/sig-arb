@@ -68,7 +68,9 @@ def readiness(*, snapshot_path=None, public=False, public_limit=0,
                                            "note": "Run the read-only SIG portfolio adapter with account access."}
     checks["execution_gate"] = {"status": "BLOCKED", "reason": "Production execution remains disabled by policy."}
     return {"checks": checks,
-            "ready_for_paper": all(checks[name]["status"] == "PASS" for name in ("mapping_registry", "news_ledger", "paper_shadow")),
+            "ready_for_paper": all(checks[name]["status"] == "PASS" for name in
+                                    ("mapping_registry", "news_ledger", "sig_snapshot",
+                                     "public_venues", "paper_shadow")),
             "ready_for_live": False, "research_only": True}
 
 

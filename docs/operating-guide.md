@@ -16,9 +16,9 @@ PYTHONPATH=. python3 system_check.py
 ```
 
 `system_check.py` is a read-only readiness audit. Add `--sig-snapshot
-logs/browser_snapshot.json` to verify relay freshness, and add `--public` to
-query venue coverage. It reports paper readiness separately from the blocked
-live-execution gate.
+logs/browser_snapshot.json --public` to verify current SIG freshness and venue
+coverage; paper readiness remains false until those inputs pass. It reports
+paper readiness separately from the blocked live-execution gate.
 
 The dashboard shows SIG signals, venue coverage, mapped/approved counts,
 movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes

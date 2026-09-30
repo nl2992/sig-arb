@@ -9,7 +9,7 @@ from system_check import readiness
 class SystemCheckTests(unittest.TestCase):
     def test_default_readiness_is_paper_only(self):
         result = readiness()
-        self.assertTrue(result["ready_for_paper"])
+        self.assertFalse(result["ready_for_paper"])
         self.assertFalse(result["ready_for_live"])
         self.assertEqual("BLOCKED", result["checks"]["execution_gate"]["status"])
 
