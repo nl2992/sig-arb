@@ -2,7 +2,7 @@ import unittest
 import json
 from unittest.mock import patch
 
-from dashboard import report
+from dashboard import Source, report
 from signals import Snapshot
 
 
@@ -77,6 +77,12 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual({'kalshi': 1, 'polymarket': 1}, data['crossvenue']['market_counts'])
         self.assertEqual({'discovered': 0, 'approved': 0}, data['crossvenue']['mapping_counts'])
         json.dumps(data, allow_nan=False)
+
+    def test_replay_portfolio_state_is_explicit(self):
+        source = Source(replay='fixtures/sample_snapshot.json')
+        data = source.get_portfolio()
+        self.assertEqual('REPLAY', data['status'])
+        self.assertTrue(data['read_only'])
 
 
 if __name__ == '__main__':

@@ -19,6 +19,7 @@ from crossvenue_models import PriceObservation
 from market_matches import load_registry
 from movement_scanner import scan_movements
 from relative_value import scan_pairs
+from portfolio import fetch_sig_portfolio
 
 ROOT = Path(__file__).parent
 
@@ -178,6 +179,8 @@ class Source:
         self.news_cache = {}
         self.crossvenue_cache = None
         self.crossvenue_fetched = 0
+        self.portfolio_cache = None
+        self.portfolio_fetched = 0
 
     def accept_browser_snapshot(self, payload):
         markets = payload.get('markets')
@@ -235,6 +238,30 @@ class Source:
                 self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], 1000)
                 self.crossvenue_fetched = time.monotonic()
             return self.crossvenue_cache
+
+    def get_portfolio(self):
+        with self.lock:
+            if self.replay:
+                return {'venue': 'sig', 'status': 'REPLAY', 'read_only': True,
+                        'kill_switch_required': False,
+                        'note': 'Account reconciliation is unavailable in replay mode.'}
+            if self.portfolio_cache is not None and time.monotonic() - self.portfolio_fetched < 60:
+                return self.portfolio_cache
+            try:
+                client = Client()
+                markets = client.markets()
+                data = fetch_sig_portfolio(client, markets)
+            except PermissionError:
+                data = {'venue': 'sig', 'status': 'AUTH_REQUIRED', 'read_only': True,
+                        'kill_switch_required': True,
+                        'note': 'Signed-in SIG account data is unavailable.'}
+            except Exception:
+                data = {'venue': 'sig', 'status': 'UNAVAILABLE', 'read_only': True,
+                        'kill_switch_required': True,
+                        'note': 'SIG account data could not be read.'}
+            self.portfolio_cache = data
+            self.portfolio_fetched = time.monotonic()
+            return data
 
 
 def handler(source):
@@ -295,6 +322,11 @@ def handler(source):
                     self.send_body(200, json.dumps(source.get_crossvenue(), allow_nan=False).encode(), 'application/json')
                 except Exception:
                     self.send_body(502, b'{"error":"Cross-venue data unavailable. Retry the scan."}', 'application/json')
+            elif url.path == '/api/portfolio':
+                try:
+                    self.send_body(200, json.dumps(source.get_portfolio(), allow_nan=False).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"Portfolio state unavailable. Retry the reconciliation check."}', 'application/json')
             elif url.path in ("/", "/dashboard.css", "/dashboard.js"):
                 file = "dashboard.html" if url.path == "/" else url.path[1:]
                 mime = {"html": "text/html", "css": "text/css", "js": "application/javascript"}

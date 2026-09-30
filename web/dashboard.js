@@ -40,8 +40,16 @@ function freshness(){if(!data)return;const age=(Date.now()-Date.parse(data.ts))/
 async function refresh(){if(busy)return;busy=true;$('refresh').disabled=true;$('status').textContent='Scanning…';try{const response=await fetch('/api/signals?'+params,{signal:AbortSignal.timeout(120000)});const result=await response.json();if(!response.ok)throw Error(result.error||'Scan failed');data=result;failed=false;$('error').hidden=true;if(selected===null&&data.signals.length)selected=data.signals[0].race+data.signals[0].direction;render();}catch(e){failed=true;$('error').textContent=e.message+' Last successful results, if present, are retained.';$('error').hidden=false;$('status').textContent='Scan failed';freshness();}finally{busy=false;$('refresh').disabled=false;}}
 $('filters').onsubmit=e=>{e.preventDefault();if(busy)return;params=new URLSearchParams(Object.fromEntries(['fee','budget','capital','cap_pct','edge','profit','roi'].map(k=>[k,$(k).value||'0'])));refresh();};
 $('refresh').onclick=refresh;$('search').oninput=render;$('sort').onchange=render;
+async function refreshPortfolio(){
+ try{
+  const response=await fetch('/api/portfolio',{signal:AbortSignal.timeout(120000)});
+  const result=await response.json();
+  $('portfolioStatus').textContent=result.status||'UNKNOWN';
+  $('portfolioStatus').style.color=result.kill_switch_required?'#a2612e':'#19744b';
+ }catch(e){$('portfolioStatus').textContent='UNAVAILABLE';$('portfolioStatus').style.color='#a2612e';}
+}
 window.addEventListener('resize',()=>{const r=data?.signals.find(r=>r.race+r.direction===selected);if(r)draw(r)});
-setInterval(()=>{if($('auto').checked&&!document.hidden)refresh();},30000);setInterval(()=>{if(!busy)freshness();},5000);refresh();
+setInterval(()=>{if($('auto').checked&&!document.hidden)refresh();},30000);setInterval(()=>{if(!busy)freshness();},5000);refresh();refreshPortfolio();
 $('kellyForm').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;const q=new URLSearchParams({market:$('market').value,no:$('position').value,probability:Number($('probability').value)/100,bankroll:$('bankroll').value,fraction:$('fraction').value,fee:params.get('fee')});$('kellyResult').textContent='Calculating…';try{const response=await fetch('/api/kelly?'+q,{signal:AbortSignal.timeout(120000)});const r=await response.json();if(!response.ok)throw Error(r.error);$('kellyResult').textContent=`${fmt(r.qty,0)} shares · ${fmt(r.capital)} capital (${fmt(r.bankroll_fraction*100)}% of bankroll) · ${r.vwap===null?'No positive edge':fmt(r.vwap,4)+' VWAP'} · ${fmt(r.expected_profit)} expected profit · ${fmt(r.growth*100,4)}% expected log growth · snapshot ${new Date(r.ts).toLocaleTimeString()}`;}catch(e){$('kellyResult').textContent=e.message;}finally{button.disabled=false;}};
 ['market','position','probability','bankroll','fraction'].forEach(id=>$(id).addEventListener('change',()=>{$('kellyResult').textContent='Inputs changed. Awaiting calculation.'}));
 let newsRequest=0;
