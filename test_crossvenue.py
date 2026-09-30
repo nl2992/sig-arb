@@ -119,6 +119,25 @@ class CrossVenueTests(unittest.TestCase):
         adapter = KalshiAdapter(session=Paged())
         self.assertEqual(['KX1', 'KX2'], [m.market_id for m in adapter.markets(0)])
 
+    def test_public_adapter_retries_rate_limit(self):
+        class RetrySession:
+            def __init__(self): self.calls = 0
+            def get(self, url, *args, **kwargs):
+                self.calls += 1
+                status = 429 if self.calls == 1 else 200
+                class R:
+                    status_code = status
+                    headers = {}
+                    def raise_for_status(self):
+                        if self.status_code == 429:
+                            raise RuntimeError('rate limited')
+                    def json(self): return {'markets': []}
+                return R()
+        session = RetrySession()
+        adapter = KalshiAdapter(session=session)
+        self.assertEqual([], adapter.markets(1))
+        self.assertEqual(2, session.calls)
+
     def test_polymarket_clob_books_are_normalized(self):
         class FakeCLOB:
             def get(self, url, *args, **kwargs):

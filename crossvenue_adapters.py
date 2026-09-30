@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import time
 from typing import Any, Dict, Iterable, List, Optional
 
 import requests
@@ -42,9 +43,18 @@ class PublicAdapter:
             self.session.headers.setdefault("User-Agent", "sig-arb-crossvenue/0.1")
 
     def _get(self, path: str, **params):
-        response = self.session.get(self.base_url + path, params=params, timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._get_url(self.base_url + path, params)
+
+    def _get_url(self, url: str, params: dict):
+        for attempt in range(4):
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            if getattr(response, "status_code", 200) != 429:
+                response.raise_for_status()
+                return response.json()
+            if attempt == 3:
+                response.raise_for_status()
+            retry_after = parse_float(getattr(response, "headers", {}).get("Retry-After"))
+            time.sleep(retry_after if retry_after is not None else 2 ** attempt)
 
 
 class KalshiAdapter(PublicAdapter):
@@ -158,9 +168,7 @@ class PolymarketAdapter(PublicAdapter):
         self.clob_base_url = (clob_base_url or os.getenv("POLYMARKET_CLOB_API", self.DEFAULT_CLOB_URL)).rstrip("/")
 
     def _clob_get(self, path: str, **params):
-        response = self.session.get(self.clob_base_url + path, params=params, timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+        return self._get_url(self.clob_base_url + path, params)
 
     @staticmethod
     def _levels(value: Any) -> list[dict]:
