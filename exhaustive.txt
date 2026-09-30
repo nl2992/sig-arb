@@ -1,0 +1,5 @@
+# Races where the listed markets cover EVERY possible winner (one per line).
+# Only these get BUY_ALL (sum of asks < 1) signals. Be conservative.
+# Idaho Senate and South Dakota Senate are always excluded (credible unlisted candidates).
+# Example:
+# Iowa Senate

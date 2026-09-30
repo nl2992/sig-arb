@@ -1,0 +1,257 @@
+{
+ "ts": "2026-09-30T00:20:00+00:00",
+ "markets": [
+  {
+   "id": 386,
+   "title": "Will the Republican Party win the Delaware Senate?"
+  },
+  {
+   "id": 353,
+   "title": "Will the Democratic Party win the Delaware Senate?"
+  },
+  {
+   "id": 382,
+   "title": "Will the Republican Party win the New Hampshire Senate?"
+  },
+  {
+   "id": 381,
+   "title": "Will the Democratic Party win the New Hampshire Senate?"
+  },
+  {
+   "id": 263,
+   "title": "Will the Republican Party win the Idaho Senate?"
+  },
+  {
+   "id": 262,
+   "title": "Will the Democratic Party win the Idaho Senate?"
+  },
+  {
+   "id": 901,
+   "title": "Will the Republican Party win the Synthetic Senate?"
+  },
+  {
+   "id": 902,
+   "title": "Will the Democratic Party win the Synthetic Senate?"
+  },
+  {
+   "id": 281,
+   "title": "Will the Republican Party win the Nebraska Senate?"
+  },
+  {
+   "id": 280,
+   "title": "Will the Independent Party win the Nebraska Senate?"
+  },
+  {
+   "id": 279,
+   "title": "Will the Democratic Party win the Nebraska Senate?"
+  }
+ ],
+ "levels": {
+  "386": [
+   {
+    "exchangeId": 1,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.08,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 1,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.16,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "353": [
+   {
+    "exchangeId": 2,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.95,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "382": [
+   {
+    "exchangeId": 3,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.095,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 3,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.175,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "381": [
+   {
+    "exchangeId": 4,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.825,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 4,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.905,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "263": [
+   {
+    "exchangeId": 5,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.88,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 5,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.96,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "262": [
+   {
+    "exchangeId": 6,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.045,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "901": [
+   {
+    "exchangeId": 7,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.3,
+    "quantity": 200,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 7,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.28,
+    "quantity": 500,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 7,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.25,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 7,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.33,
+    "quantity": 300,
+    "orderCount": 1
+   }
+  ],
+  "902": [
+   {
+    "exchangeId": 8,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.76,
+    "quantity": 300,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 8,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.74,
+    "quantity": 400,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 8,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.7,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 8,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.78,
+    "quantity": 300,
+    "orderCount": 1
+   }
+  ],
+  "281": [
+   {
+    "exchangeId": 9,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.685,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 9,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.765,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "280": [
+   {
+    "exchangeId": 10,
+    "side": "BUY",
+    "isYes": true,
+    "price": 0.245,
+    "quantity": 1000,
+    "orderCount": 1
+   },
+   {
+    "exchangeId": 10,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.325,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ],
+  "279": [
+   {
+    "exchangeId": 11,
+    "side": "SELL",
+    "isYes": true,
+    "price": 0.04,
+    "quantity": 1000,
+    "orderCount": 1
+   }
+  ]
+ }
+}
