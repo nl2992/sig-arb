@@ -23,7 +23,8 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from arb_engine import ArbResult, Book, TITLE_RE, breakeven_limit, group_markets, scan
+from arb_engine import (ArbResult, Book, TITLE_RE, breakeven_limit,
+                        group_markets, max_executable_arb, scan)
 
 HERE = pathlib.Path(__file__).parent
 SITE = "https://sig.thesuper.market/markets/"
@@ -71,6 +72,14 @@ class Snapshot:
         return {i: Book.from_levels(i, L) for i, L in self.levels.items()}
 
 
+@dataclass
+class ScanReport:
+    """Read-only scan output, including rejected opportunities."""
+    opportunities: List[ArbResult]
+    diagnostics: List[dict]
+    liquidity: List[dict]
+
+
 # --------------------------------------------------------------- signals
 def leg_label(mid: int, titles: Dict[int, str]) -> str:
     m = TITLE_RE.match(titles.get(mid, ""))
@@ -84,13 +93,103 @@ def near_misses(groups, books: Dict[int, Book], exhaustive: set, n: int) -> List
         bks = [books[m] for m in legs.values() if m in books]
         if len(bks) != len(legs):
             continue
-        sb = sum((b.best_bid() or 0.0) for b in bks)
-        sa = sum((b.best_ask() or 1.0) for b in bks)
-        rows.append({"race": race, "dir": "SELL_ALL", "edge": sb - 1, "sum": sb})
+        bids = [b.best_bid() for b in bks]
+        asks = [b.best_ask() for b in bks]
+        # Missing liquidity is unavailable, not a zero/one price. Each
+        # direction only depends on its own required side.
+        if all(p is not None for p in bids):
+            sb = sum(bids)
+            rows.append({"race": race, "dir": "SELL_ALL", "edge": sb - 1, "sum": sb})
         if race in exhaustive:
-            rows.append({"race": race, "dir": "BUY_ALL", "edge": 1 - sa, "sum": sa})
+            if all(p is not None for p in asks):
+                sa = sum(asks)
+                rows.append({"race": race, "dir": "BUY_ALL", "edge": 1 - sa, "sum": sa})
     rows.sort(key=lambda r: -r["edge"])
     return [r for r in rows if r["edge"] <= 0][:n]
+
+
+def scan_diagnostics(snapshot: Snapshot, exhaustive: set, *, min_edge: float = 0.0,
+                     fee_per_share: float = 0.0, cash: Optional[float] = None,
+                     max_qty: Optional[float] = None) -> ScanReport:
+    """Scan one snapshot and retain machine-readable reasons for rejection."""
+    groups = group_markets(snapshot.markets)
+    books = snapshot.books()
+    opportunities = scan(
+        groups, books, exhaustive, min_edge=min_edge,
+        fee_per_share=fee_per_share, cash=cash, max_qty=max_qty,
+    )
+    diagnostics = []
+    liquidity = []
+    for market in snapshot.markets:
+        mid = market["id"]
+        book = books.get(mid)
+        liquidity.append({
+            "market_id": mid,
+            "has_book": mid in snapshot.levels,
+            "bid": book.best_bid() if book else None,
+            "ask": book.best_ask() if book else None,
+            "bid_available": bool(book and book.bids),
+            "ask_available": bool(book and book.asks),
+        })
+
+    for race, legs in groups.items():
+        market_ids = list(legs.values())
+        for direction in ("SELL_ALL", "BUY_ALL"):
+            required = "bid" if direction == "SELL_ALL" else "ask"
+            record = {
+                "race": race, "direction": direction, "market_ids": market_ids,
+                "status": "REJECTED", "reasons": [], "missing_market_ids": [],
+                "required_side": required, "top_edge": None, "top_price_sum": None,
+                "quantity": 0, "depth_adjusted_pnl": None,
+            }
+            if len(market_ids) < 2:
+                record["reasons"] = ["INSUFFICIENT_LEGS"]
+                diagnostics.append(record)
+                continue
+            if direction == "BUY_ALL" and race not in exhaustive:
+                record["status"] = "RULE_BLOCKED"
+                record["reasons"] = ["NOT_EXHAUSTIVE"]
+                diagnostics.append(record)
+                continue
+            missing_books = [mid for mid in market_ids if mid not in books]
+            if missing_books:
+                record["missing_market_ids"] = missing_books
+                record["reasons"] = ["MISSING_BOOK"]
+                diagnostics.append(record)
+                continue
+            missing_side = [mid for mid in market_ids
+                            if not getattr(books[mid], required + "s")]
+            if missing_side:
+                record["missing_market_ids"] = missing_side
+                record["reasons"] = ["MISSING_BID" if required == "bid" else "MISSING_ASK"]
+                diagnostics.append(record)
+                continue
+            prices = [getattr(books[mid], "best_" + required)() for mid in market_ids]
+            top_sum = sum(prices)
+            edge = ((top_sum - 1.0) if direction == "SELL_ALL" else (1.0 - top_sum)) - len(market_ids) * fee_per_share
+            record["top_edge"] = edge
+            record["top_price_sum"] = top_sum
+            if edge <= 0:
+                record["reasons"] = ["NON_POSITIVE_EDGE"]
+                diagnostics.append(record)
+                continue
+            if edge < min_edge:
+                record["reasons"] = ["BELOW_MIN_EDGE"]
+                diagnostics.append(record)
+                continue
+            result = max_executable_arb(
+                race, [books[mid] for mid in market_ids], direction,
+                min_edge=min_edge, fee_per_share=fee_per_share,
+                cash=cash, max_qty=max_qty,
+            )
+            if result is None:
+                record["reasons"] = ["NO_DEPTH_AT_LIMITS"]
+                diagnostics.append(record)
+                continue
+            record.update(status="ELIGIBLE", quantity=result.qty,
+                          depth_adjusted_pnl=result.pnl)
+            diagnostics.append(record)
+    return ScanReport(opportunities, diagnostics, liquidity)
 
 
 def tickets(r: ArbResult, titles: Dict[int, str], fee: float = 0.0) -> List[str]:

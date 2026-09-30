@@ -12,7 +12,7 @@ from arb_engine import group_markets, scan
 from sig_client import Client
 from kelly import size_position
 from news import fetch_news
-from signals import Snapshot, load_exhaustive
+from signals import Snapshot, load_exhaustive, scan_diagnostics
 
 ROOT = Path(__file__).parent
 
@@ -33,12 +33,12 @@ def report(snapshot, params):
         budget = min(budget, per_punt) if budget else per_punt
     edge = number("edge", 0)
     minimum = number("profit", 1)
-    min_roi = number("roi", 10) / 100
-    books = snapshot.books()
+    min_roi = number("roi", 5) / 100
     groups = group_markets(snapshot.markets)
     exhaustive = load_exhaustive()
-    results = scan(groups, books, exhaustive, fee_per_share=fee,
-                   min_edge=edge, cash=budget or None)
+    scan_report = scan_diagnostics(snapshot, exhaustive, fee_per_share=fee,
+                                   min_edge=edge, cash=budget or None)
+    results = scan_report.opportunities
     titles = {m["id"]: m["title"] for m in snapshot.markets}
     rows = []
     punts = []
@@ -59,24 +59,17 @@ def report(snapshot, params):
         elif r.pnl >= minimum:
             row["required_roi"] = min_roi
             punts.append(row)
-    near = []
-    for race, legs in groups.items():
-        if len(legs) < 2 or any(mid not in books for mid in legs.values()):
-            continue
-        for direction in (["SELL_ALL", "BUY_ALL"] if race in exhaustive else ["SELL_ALL"]):
-            prices = [(books[mid].best_bid() if direction == "SELL_ALL"
-                       else books[mid].best_ask()) for mid in legs.values()]
-            if any(price is None for price in prices):
-                continue
-            edge = (sum(prices)-1 if direction == "SELL_ALL" else 1-sum(prices))-len(prices)*fee
-            if edge <= 0:
-                near.append(dict(race=race, dir=direction, edge=edge))
+    near = [dict(race=d["race"], dir=d["direction"], edge=d["top_edge"])
+            for d in scan_report.diagnostics
+            if d["top_edge"] is not None and d["top_edge"] <= 0]
     near.sort(key=lambda r: -r["edge"])
     return dict(ts=snapshot.ts, markets=len(snapshot.markets), races=len(groups),
                 exhaustive=len(exhaustive), fee=fee, budget=budget,
                 overall_capital=overall, cap_pct=cap_pct,
                 signals=rows, near=near[:12],
                 punts=punts[:25],
+                diagnostics=scan_report.diagnostics,
+                liquidity=scan_report.liquidity,
                 markets_list=[dict(id=m['id'], title=m['title']) for m in snapshot.markets])
 
 

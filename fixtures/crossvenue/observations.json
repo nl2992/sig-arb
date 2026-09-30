@@ -1,0 +1,7 @@
+{
+  "observations": [
+    {"venue": "kalshi", "market_id": "FIXTURE-KX1", "outcome_id": "YES", "observed_at": "2026-09-29T22:20:00+00:00", "last": 0.5, "source": "fixture", "price_basis": "last"},
+    {"venue": "kalshi", "market_id": "FIXTURE-KX1", "outcome_id": "YES", "observed_at": "2026-09-30T00:20:00+00:00", "last": 0.6, "source": "fixture", "price_basis": "last"},
+    {"venue": "kalshi", "market_id": "FIXTURE-KX2", "outcome_id": "YES", "observed_at": "2026-09-30T00:20:00+00:00", "last": 0.4, "source": "fixture", "price_basis": "last"}
+  ]
+}

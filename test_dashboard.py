@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch
 
 from dashboard import report
@@ -52,10 +53,20 @@ class DashboardTests(unittest.TestCase):
         data = report(self.snapshot, {})
         self.assertEqual(data['signals'], [])
         self.assertTrue({r['race'] for r in data['punts']} >= {'Delaware Senate', 'Synthetic Senate'})
+        self.assertTrue(all(r['required_roi'] == 0.05 for r in data['punts']))
 
     def test_buy_yes_requires_exhaustive_allowlist(self):
         with patch('dashboard.load_exhaustive', return_value=set()):
             self.assertTrue(all(r['direction'] == 'SELL_ALL' for r in report(self.snapshot, {'roi': ['0']})['signals']))
+
+    def test_extended_fields_preserve_compatibility_and_json_safety(self):
+        data = report(self.snapshot, {'roi': ['0']})
+        self.assertIn('signals', data)
+        self.assertIn('near', data)
+        self.assertIn('punts', data)
+        self.assertIn('diagnostics', data)
+        self.assertIn('liquidity', data)
+        json.dumps(data, allow_nan=False)
 
 
 if __name__ == '__main__':

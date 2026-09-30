@@ -148,3 +148,43 @@ persistence separately from probability: surviving scans do not prove fair value
 
 Kelly reference: https://theory.stanford.edu/~blynn/pr/kelly.html
 Run sizing checks with `python3 -m unittest test_kelly`.
+
+### Cross-venue research scanner
+
+The repository includes a read-only comparison layer for public Kalshi and
+Polymarket market data. It does not place, quote, cancel, or simulate orders.
+It normalizes public metadata and indicative prices, while keeping approved
+cross-venue mappings in an explicit review registry. The registry starts empty
+because similarly worded contracts are not proof of identical settlement rules.
+
+Fetch a public inventory snapshot:
+
+```bash
+python3 crossvenue.py fetch-public --venues kalshi polymarket --limit 1000 \
+  --out /tmp/crossvenue-public.json
+```
+
+Offline movement analysis uses a SIG snapshot, timestamped reference
+observations, and only mappings marked `APPROVED` in a registry:
+
+```bash
+python3 crossvenue.py scan \
+  --snapshot fixtures/sample_snapshot.json \
+  --observations fixtures/crossvenue/observations.json \
+  --matches fixtures/crossvenue/test_matches.json \
+  --lookback-minutes 120 --min-move-pp 5
+```
+
+The default movement threshold is 5 percentage points over two hours. Results
+are research candidates only and require a current SIG executable side plus a
+configurable price gap. Missing history, stale data, missing SIG liquidity,
+and unapproved mappings are rejected explicitly.
+
+The current point-in-time market index, including links to all SIG markets and
+the review status of venue mappings, is in
+[docs/market-links.md](docs/market-links.md). Regenerate it from the
+authenticated SIG universe with:
+
+```bash
+PYTHONPATH=. python3 tools/generate_market_links.py
+```

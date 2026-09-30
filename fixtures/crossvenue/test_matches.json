@@ -1,0 +1,7 @@
+{
+  "registry_version": 1,
+  "matches": [
+    {"sig_market_id": 386, "reference_venue": "kalshi", "reference_market_id": "FIXTURE-KX1", "reference_outcome_id": "YES", "outcome_relation": "SAME", "status": "APPROVED", "reviewed_at": "2026-09-30T00:00:00+00:00", "evidence": "Synthetic fixture only; not a production mapping."},
+    {"sig_market_id": 353, "reference_venue": "kalshi", "reference_market_id": "FIXTURE-KX2", "reference_outcome_id": "YES", "outcome_relation": "PROPOSED", "status": "PROPOSED", "evidence": "Synthetic rejected comparison."}
+  ]
+}
