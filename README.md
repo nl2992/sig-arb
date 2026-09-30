@@ -204,8 +204,8 @@ applies the default 5% SIG ROI hurdle, and reports movement, executable gaps,
 and research-only relative-value z-scores. It never places orders:
 
 ```bash
-SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --once
-SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --interval 60
+SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --targeted --once
+SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --targeted --interval 60
 ```
 
 The production mapping registry intentionally remains empty until each

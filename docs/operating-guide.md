@@ -11,7 +11,7 @@
 
 ```bash
 python3 dashboard.py --port 8765
-SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --interval 60
+SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --targeted --interval 60
 PYTHONPATH=. python3 system_check.py
 ```
 

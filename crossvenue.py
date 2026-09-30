@@ -8,7 +8,7 @@ import time
 import datetime as dt
 from types import SimpleNamespace
 
-from crossvenue_adapters import fetch_public
+from crossvenue_adapters import fetch_public, load_targeted_market_ids
 from crossvenue_models import PriceObservation
 from market_matches import load_registry
 from movement_scanner import scan_movements
@@ -52,7 +52,7 @@ def _snapshot_age_seconds(snapshot):
     return max(0.0, (dt.datetime.now(dt.timezone.utc) - observed).total_seconds())
 
 
-def _live_once(args, cli, markets, matches, history):
+def _live_once(args, cli, markets, matches, history, market_ids=None):
     snap = Snapshot.load(args.sig_snapshot) if args.sig_snapshot else Snapshot.fetch(cli, markets)
     age = _snapshot_age_seconds(snap)
     if args.sig_snapshot and age > args.max_snapshot_age:
@@ -61,7 +61,7 @@ def _live_once(args, cli, markets, matches, history):
                 "max_snapshot_age": args.max_snapshot_age,
                 "execution_enabled": False,
                 "note": "Research scan blocked until the authenticated SIG snapshot refreshes."}
-    public = fetch_public(["kalshi", "polymarket"], args.limit)
+    public = fetch_public(["kalshi", "polymarket"], args.limit, market_ids=market_ids)
     observations = [PriceObservation(**row)
                     for venue in public.values() for row in venue["observations"]]
     wanted = {(m.reference_venue, m.reference_market_id, m.reference_outcome_id.upper())
@@ -131,6 +131,8 @@ def main(argv=None):
                       help="read SIG books from the authenticated browser relay")
     live.add_argument("--max-snapshot-age", type=float, default=30.0)
     live.add_argument("--limit", type=int, default=1000)
+    live.add_argument("--targeted", action="store_true",
+                      help="use native IDs from docs/market-links.csv")
     live.add_argument("--min-move-pp", type=float, default=5.0)
     live.add_argument("--lookback-minutes", type=int, default=120)
     live.add_argument("--min-points", type=int, default=10)
@@ -150,13 +152,14 @@ def main(argv=None):
     if args.command == "live":
         from sig_client import Client
         matches = load_registry(args.matches)
+        market_ids = load_targeted_market_ids(ROOT / "docs/market-links.csv") if args.targeted else None
         cli = None if args.sig_snapshot else Client()
         markets = None if args.sig_snapshot else cli.markets()
         history = _read_jsonl(args.history)
         while True:
             started = time.time()
             try:
-                report = _live_once(args, cli, markets, matches, history)
+                report = _live_once(args, cli, markets, matches, history, market_ids)
                 print(json.dumps(report, indent=2), flush=True)
             except KeyboardInterrupt:
                 raise
