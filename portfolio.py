@@ -7,6 +7,7 @@ for execution decisions.
 from __future__ import annotations
 
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
 
 
@@ -73,9 +74,14 @@ def normalize_sig_portfolio(*, balance: float | None, holdings: Iterable[dict], 
 
 def fetch_sig_portfolio(client, markets: list[dict]) -> dict:
     """Fetch SIG account state using read-only client methods only."""
-    holdings, orders = [], []
-    for market in markets:
+    def fetch_market(market):
         market_id = int(market["id"])
-        holdings.extend(client.holdings(market_id))
-        orders.extend(client.my_orders(market_id))
+        return client.holdings(market_id), client.my_orders(market_id)
+
+    holdings, orders = [], []
+    workers = max(1, int(getattr(client, "concurrency", 8)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for market_holdings, market_orders in executor.map(fetch_market, markets):
+            holdings.extend(market_holdings)
+            orders.extend(market_orders)
     return normalize_sig_portfolio(balance=client.balance(), holdings=holdings, orders=orders)
