@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Account and risk</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0;text-decoration:none}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 10px;border-radius:4px;border:1px solid #2f3743;background:#161b22;color:#d5dae1;font:500 12px 'IBM Plex Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#1c222b}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:4px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;height:34px;padding:0 12px;border-bottom:1px solid #232a34;font:600 11px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9aa4b2}
+.lbl{font:600 10px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a94a3}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:6px 10px;border-bottom:1px solid #232a34;white-space:nowrap}
+td{padding:5px 10px;border-bottom:1px solid #1a2028;font-size:12px;white-space:nowrap}
+.num{text-align:right;font-family:'IBM Plex Mono',monospace}
+.stat{display:flex;flex-direction:column;gap:4px;padding:10px 14px;border-right:1px solid #232a34}
+.sv{font:500 17px 'IBM Plex Mono',monospace}
+.lim{display:grid;grid-template-columns:1fr 110px 90px;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid #1a2028;font-size:12.5px}
+.li{height:26px;background:#0b0e12;border:1px solid #2f3743;border-radius:4px;color:#e8ecf1;padding:0 8px;font:500 12px 'IBM Plex Mono',monospace;width:100%;box-sizing:border-box}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1160px; box-sizing: border-box; background: #0b0e12; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <h1 style="margin: 0; font-size: 16px; font-weight: 600;">Account &amp; reconciliation</h1>
+  <div role="group" aria-label="Ledger" style="display: flex; border: 1px solid #2f3743; border-radius: 4px; overflow: hidden;">
+    <button class="btn" style="border: none; border-radius: 0; background: #1c222b;">SIG account (read-only)</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; background: transparent;">Paper ledger</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; background: transparent;">Shadow ledger</button>
+  </div>
+  <span class="b a">MOCK DATA</span>
+  <div style="flex-grow: 1;"></div>
+  <span class="m mut" style="font-size: 11px;">last reconcile 11:40:00 ET · next 11:45:00</span>
+  <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h7M16 16l2 2 4-4"></path></svg>Reconcile now</button>
+  <button class="btn" style="height: 32px; background: #3a1414; border-color: #8a2f2a; color: #ffb3ad; font-weight: 600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v9M6.3 7a8 8 0 1 0 11.4 0"></path></svg>EMERGENCY STOP</button>
+</div>
+
+<div class="panel" style="display: grid; grid-template-columns: repeat(8, minmax(0, 1fr));">
+  <div class="stat"><span class="lbl">SIG cash</span><span class="sv">$10,000.00</span><span class="m mut" style="font-size: 11px;">/api/me · 11:44:10</span></div>
+  <div class="stat"><span class="lbl">Buying power</span><span class="sv">$9,684.30</span><span class="m mut" style="font-size: 11px;">$315.70 reserved</span></div>
+  <div class="stat"><span class="lbl">Open orders</span><span class="sv">1</span><span class="m mut" style="font-size: 11px;">190 ct resting</span></div>
+  <div class="stat"><span class="lbl">Realized P&amp;L</span><span class="sv">$0.00</span><span class="m mut" style="font-size: 11px;">today</span></div>
+  <div class="stat"><span class="lbl">Mark-to-market</span><span class="sv" style="color: #f08079;">−$2.32</span><span class="m mut" style="font-size: 11px;">at bid · not mid</span></div>
+  <div class="stat"><span class="lbl">Fees paid</span><span class="sv">$0.00</span><span class="m mut" style="font-size: 11px;">SIG $0 · K $0 · PM $0</span></div>
+  <div class="stat"><span class="lbl">Residual exposure</span><span class="sv" style="color: #f08079;">320 ct</span><span class="m mut" style="font-size: 11px;">max 50 · $198.16</span></div>
+  <div class="stat" style="border-right: none;"><span class="lbl">Kill switch</span><span class="b r" style="align-self: flex-start; margin-top: 4px;">ENGAGED</span><span class="m mut" style="font-size: 11px;">since 11:30:00</span></div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+  <section class="panel">
+    <div class="ph"><span>SIG holdings</span><span class="m mut" style="text-transform: none; letter-spacing: 0;">/api/portfolio</span></div>
+    <table>
+      <thead><tr><th>Market</th><th>Out.</th><th style="text-align: right;">Qty</th><th style="text-align: right;">Avg</th><th style="text-align: right;">Bid</th><th style="text-align: right;">MTM</th></tr></thead>
+      <tbody><sc-for list="{{hold}}" as="h" hint-placeholder-count="2"><tr><td>{{h.m}}</td><td class="m">{{h.o}}</td><td class="num">{{h.q}}</td><td class="num">{{h.a}}</td><td class="num">{{h.b}}</td><td class="num" style="{{h.s}}">{{h.p}}</td></tr></sc-for></tbody>
+    </table>
+    <div class="mut" style="font-size: 11px; padding: 8px 12px;">Holdings come only from SIG responses. Never derived from local intent.</div>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>SIG open orders</span><button class="btn" style="height: 22px; font-size: 11px;">Cancel all</button></div>
+    <table>
+      <thead><tr><th>Order</th><th>Market</th><th>Side</th><th style="text-align: right;">Px</th><th style="text-align: right;">Open</th><th style="text-align: right;">Age</th><th></th></tr></thead>
+      <tbody><tr><td class="m mut">paper-8812</td><td>NV-03 #447</td><td class="m">BUY NO</td><td class="num">0.620</td><td class="num">190</td><td class="num">52s</td><td><button class="btn" style="height: 22px; font-size: 11px;" aria-label="Cancel order paper-8812"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 6l12 12M18 6 6 18"></path></svg>Cancel</button></td></tr></tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Venue exposure vs limit</span></div>
+    <div style="padding: 8px 12px; display: flex; flex-direction: column; gap: 10px;">
+      <sc-for list="{{vex}}" as="v" hint-placeholder-count="3">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="display: flex; justify-content: space-between; font-size: 12px;"><span>{{v.n}}</span><span class="m">{{v.t}}</span></div>
+          <div style="height: 6px; background: #1a2028; border-radius: 3px;"><div style="{{v.bar}}"></div></div>
+        </div>
+      </sc-for>
+      <span class="lbl" style="margin-top: 4px;">Per-event</span>
+      <sc-for list="{{eex}}" as="v" hint-placeholder-count="2">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="display: flex; justify-content: space-between; font-size: 12px;"><span>{{v.n}}</span><span class="m">{{v.t}}</span></div>
+          <div style="height: 6px; background: #1a2028; border-radius: 3px;"><div style="{{v.bar}}"></div></div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+</div>
+
+<div style="display: grid; grid-template-columns: 3fr 2fr; gap: 12px;">
+  <section class="panel">
+    <div class="ph"><span>Intended vs actual positions</span><span class="b r">2 BREAKS</span></div>
+    <table>
+      <thead><tr><th>Ticket</th><th>Market</th><th style="text-align: right;">Intended</th><th style="text-align: right;">Actual (SIG)</th><th style="text-align: right;">Diff</th><th>Cause</th><th>Status</th><th></th></tr></thead>
+      <tbody><sc-for list="{{recon}}" as="x" hint-placeholder-count="4"><tr><td class="m mut">{{x.t}}</td><td>{{x.m}}</td><td class="num">{{x.i}}</td><td class="num">{{x.a}}</td><td class="num" style="{{x.ds}}">{{x.d}}</td><td class="mut" style="font-size: 11.5px;">{{x.c}}</td><td><span class="b {{x.sc}}">{{x.s}}</span></td><td><button class="btn" style="height: 22px; font-size: 11px;">Resolve</button></td></tr></sc-for></tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Unmatched fills</span><span class="b a">1 OPEN</span></div>
+    <table>
+      <thead><tr><th>Time</th><th>Venue id</th><th>Market</th><th style="text-align: right;">Qty @ px</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td class="m">11:21:08</td><td class="m mut">sig-77120</td><td>DE Sen #353</td><td class="num">40 @ 0.050</td><td><button class="btn" style="height: 22px; font-size: 11px;">Attach to ticket</button></td></tr>
+      </tbody>
+    </table>
+    <div class="mut" style="font-size: 11px; padding: 8px 12px; white-space: normal;">A fill with no matching client_order_id. Likely a manual order on the SIG site. Blocks live mode until it is attached or acknowledged.</div>
+  </section>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px; flex-grow: 1;">
+  <section class="panel">
+    <div class="ph"><span>Risk controls</span><span style="display: flex; gap: 6px;"><span class="b a">CHANGES REQUIRE CONFIRM + AUDIT</span><button class="btn" style="height: 22px; font-size: 11px;">Save limits</button></span></div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr;">
+      <div style="border-right: 1px solid #232a34;">
+        <div class="lim"><span class="lbl">Limit</span><span class="lbl">Value</span><span class="lbl">Used</span></div>
+        <label class="lim"><span>Per-trade capital</span><input class="li" value="$1,000"><span class="m">$504</span></label>
+        <label class="lim"><span>Daily loss</span><input class="li" value="$500"><span class="m">$2.32</span></label>
+        <label class="lim"><span>SIG exposure</span><input class="li" value="$5,000"><span class="m">$198</span></label>
+        <label class="lim"><span>Kalshi exposure</span><input class="li" value="$2,000"><span class="m">$0</span></label>
+        <label class="lim"><span>Polymarket exposure</span><input class="li" value="$2,000"><span class="m">$0</span></label>
+        <label class="lim"><span>Per-event exposure</span><input class="li" value="$1,500"><span class="m">$198</span></label>
+      </div>
+      <div>
+        <div class="lim"><span class="lbl">Guard</span><span class="lbl">Value</span><span class="lbl">State</span></div>
+        <label class="lim"><span>Max quote age</span><input class="li" value="5.0 s"><span class="b r">1 STALE</span></label>
+        <label class="lim"><span>Max slippage</span><input class="li" value="1.0 ¢"><span class="b g">OK</span></label>
+        <label class="lim"><span>Max partial-fill residual</span><input class="li" value="50 ct"><span class="b r">BREACH</span></label>
+        <label class="lim"><span>Min net edge</span><input class="li" value="0.50 %"><span class="b g">OK</span></label>
+        <label class="lim"><span>Manual approval</span><span style="display: flex; gap: 6px; align-items: center;"><input type="checkbox" checked> required</span><span class="b a">ON</span></label>
+        <label class="lim"><span>Auto hedge / flatten</span><span style="display: flex; gap: 6px; align-items: center; color: #6b7482;"><input type="checkbox" disabled> never</span><span class="b n">LOCKED OFF</span></label>
+      </div>
+    </div>
+  </section>
+  <section class="panel" style="display: flex; flex-direction: column;">
+    <div class="ph"><span>Global kill switch</span><span class="b r">ENGAGED</span></div>
+    <div style="padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px;">
+      <div style="display: flex; justify-content: space-between;"><span class="mut">Engaged by</span><span class="m">operator · 11:30:00</span></div>
+      <div style="display: flex; justify-content: space-between;"><span class="mut">Reason</span><span>pre-open, payload unverified</span></div>
+      <div style="display: flex; justify-content: space-between;"><span class="mut">Effect</span><span>blocks all non-paper sends</span></div>
+      <div style="display: flex; justify-content: space-between;"><span class="mut">Last drill</span><span class="m">09-29 17:10 · PASS</span></div>
+      <div style="height: 1px; background: #232a34; margin: 4px 0;"></div>
+      <span class="lbl">Release requires</span>
+      <span class="mut" style="white-space: normal;">All 13 live execution gates green (incl. reconciliation clean, zero unmatched fills), kill-switch drill passed, typed confirmation.</span>
+      <button class="btn" disabled style="opacity: .5;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 11h12v10H6zM8 11V8a4 4 0 0 1 8 0v3"></path></svg>Release kill switch</button>
+    </div>
+  </section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1160}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const bar = (pct, c) => 'width: ' + pct + '%; height: 6px; border-radius: 3px; background: ' + c + ';';
+    return {
+      hold: [
+        { m: 'NV-03 Rep. #447', o: 'NO', q: '320', a: '0.6193', b: '0.612', p: '−$2.32', s: 'color: #f08079;' },
+        { m: 'DE Sen Dem. #353', o: 'NO', q: '40', a: '0.0500', b: '0.050', p: '$0.00', s: '' },
+      ],
+      vex: [
+        { n: 'SIG', t: '$200 / $5,000', bar: bar(4, '#8a94a3') },
+        { n: 'Kalshi', t: '$0 / $2,000 · read-only', bar: bar(0, '#8a94a3') },
+        { n: 'Polymarket', t: '$0 / $2,000 · read-only', bar: bar(0, '#8a94a3') },
+      ],
+      eex: [
+        { n: 'Nevada NV-03', t: '$198 / $1,500', bar: bar(13, '#8a94a3') },
+        { n: 'Delaware Senate', t: '$2 / $1,500', bar: bar(1, '#8a94a3') },
+      ],
+      recon: [
+        { t: 'arb_5d0e-L1', m: 'NV-03 Rep. #447 NO', i: '510', a: '320', d: '−190', ds: 'color: #e7b75a;', c: '190 still resting', s: 'WORKING', sc: 'a' },
+        { t: 'arb_5d0e-L2', m: 'NV-03 Dem. #448 NO', i: '320', a: '0', d: '−320', ds: 'color: #f08079;', c: 'leg held for authorization', s: 'RESIDUAL', sc: 'r' },
+        { t: '—', m: 'DE Sen Dem. #353 NO', i: '0', a: '40', d: '+40', ds: 'color: #f08079;', c: 'fill with no ticket', s: 'UNMATCHED', sc: 'r' },
+        { t: 'tkt_0918', m: 'OH Sen Rep. #421 NO', i: '0', a: '0', d: '0', ds: '', c: 'cancelled pre-send (news CB)', s: 'RECONCILED', sc: 'g' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

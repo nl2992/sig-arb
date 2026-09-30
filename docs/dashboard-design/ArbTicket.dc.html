@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Multi-leg arb ticket</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0;text-decoration:none}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:4px;border:1px solid #2f3743;background:#161b22;color:#d5dae1;font:500 12.5px 'IBM Plex Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#1c222b}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:6px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;height:36px;padding:0 12px;border-bottom:1px solid #232a34}
+.lbl{font:600 10px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a94a3}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:6px 12px;border-bottom:1px solid #1a2028;font-size:12.5px}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:6px 10px;border-bottom:1px solid #232a34;white-space:nowrap}
+td{padding:5px 10px;border-bottom:1px solid #1a2028;font-size:12px;white-space:nowrap}
+.num{text-align:right;font-family:'IBM Plex Mono',monospace}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1120px; box-sizing: border-box; background: #080a0d; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px;">
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <span class="lbl">Arb ticket</span>
+  <span style="font-size: 15px; font-weight: 600;">Nevada House NV-03 · SELL_ALL · 2 legs</span>
+  <span class="b n">arb_5d0e</span><span class="b a">PAPER MODE · SIMULATED FILLS</span><span class="b g">PAIR APPROVED 09-29</span>
+  <div style="flex-grow: 1;"></div>
+  <span class="b r">RESIDUAL 320 ct &gt; MAX 50</span>
+  <span class="b a">MANUAL REVIEW REQUIRED</span>
+</div>
+
+<section class="panel">
+  <div class="ph"><span class="lbl">Order-state timeline</span><span class="m mut" style="font-size: 11px;">ET · each transition written to logs/orders.jsonl</span></div>
+  <table>
+    <thead><tr><th style="width: 90px;">Leg</th><sc-for list="{{states}}" as="s" hint-placeholder-count="8"><th>{{s}}</th></sc-for></tr></thead>
+    <tbody>
+      <sc-for list="{{tl}}" as="row" hint-placeholder-count="2">
+      <tr><td class="m">{{row.leg}}</td>
+        <sc-for list="{{row.cells}}" as="c" hint-placeholder-count="8">
+          <td><div style="{{c.style}}"><span class="m" style="font-size: 11px;">{{c.t}}</span><span class="mut" style="font-size: 10.5px;">{{c.d}}</span></div></td>
+        </sc-for>
+      </tr>
+      </sc-for>
+    </tbody>
+  </table>
+</section>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 380px; gap: 14px;">
+  <sc-for list="{{legs}}" as="L" hint-placeholder-count="2">
+  <section class="panel">
+    <div class="ph"><span style="display: flex; gap: 8px; align-items: center;"><span class="m" style="font-weight: 600;">{{L.name}}</span><span class="b {{L.sc}}">{{L.state}}</span></span><a href="#sig" class="m" style="font-size: 12px;">SIG {{L.mkt}} ↗</a></div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid #232a34;">
+      <sc-for list="{{L.f}}" as="f" hint-placeholder-count="9">
+        <div style="padding: 7px 12px; border-right: 1px solid #1a2028; border-bottom: 1px solid #1a2028; display: flex; flex-direction: column; gap: 3px;"><span class="lbl">{{f.k}}</span><span class="m" style="font-size: 13.5px;">{{f.v}}</span></div>
+      </sc-for>
+    </div>
+    <div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid #232a34;">
+      <div style="display: flex; justify-content: space-between;"><span class="lbl">Fill progress</span><span class="m" style="font-size: 12px;">{{L.prog}}</span></div>
+      <div style="height: 8px; background: #1a2028; border-radius: 4px; overflow: hidden;"><div style="{{L.bar}}"></div></div>
+    </div>
+    <table>
+      <thead><tr><th>Level</th><th style="text-align: right;">Price</th><th style="text-align: right;">Size</th><th style="text-align: right;">Take</th></tr></thead>
+      <tbody><sc-for list="{{L.depth}}" as="d" hint-placeholder-count="4"><tr style="{{d.st}}"><td class="mut">{{d.i}}</td><td class="num">{{d.p}}</td><td class="num">{{d.s}}</td><td class="num">{{d.u}}</td></tr></sc-for></tbody>
+    </table>
+    <div class="mut" style="padding: 8px 12px; font-size: 11.5px;">{{L.note}}</div>
+  </section>
+  </sc-for>
+
+  <section class="panel" style="display: flex; flex-direction: column;">
+    <div class="ph"><span class="lbl">Combined position</span><span class="b a">PAPER</span></div>
+    <div class="kv"><span class="mut">Planned size</span><span class="m">510 pairs</span></div>
+    <div class="kv"><span class="mut">Matched pairs</span><span class="m">0</span></div>
+    <div class="kv"><span class="mut">Expected P&amp;L · 320 pairs</span><span class="m">+$4.03</span></div>
+    <div class="kv"><span class="mut">Expected ROI</span><span class="m">1.27%</span></div>
+    <div class="kv"><span class="mut">Original plan · 510 pairs</span><span class="m mut">+$6.12 · 1.21%</span></div>
+    <div style="padding: 10px 12px; border-bottom: 1px solid #232a34; background: #1d1111; display: flex; flex-direction: column; gap: 4px;">
+      <span class="lbl" style="color: #f08079;">Residual exposure</span>
+      <span class="m" style="font-size: 16px; color: #f5b1ac;">320 NO #447 unhedged</span>
+      <span class="m" style="font-size: 12px;">$198.16 at risk · MTM at bid 0.612: −$2.32</span>
+      <span style="font-size: 11.5px; color: #e9a6a1;">Exceeds max residual 50 ct. Auto-trading halted for this ticket.</span>
+    </div>
+    <div class="kv"><span class="mut">Leg 2 worst acceptable</span><span class="m">≤ 0.380</span></div>
+    <div class="kv"><span class="mut">Leg 2 at min edge 0.5%</span><span class="m">≤ 0.375</span></div>
+    <div class="kv"><span class="mut">Leg 2 depth ≤ 0.375</span><span class="m">450 ≥ 320 ✓</span></div>
+    <div style="flex-grow: 1;"></div>
+    <div style="padding: 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #232a34; background: #0e1217;">
+      <span class="lbl">Operator action required — nothing is sent automatically</span>
+      <button class="btn" style="background: #261e10; border-color: #5c4420; color: #f0cb85; justify-content: flex-start;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12 20 4l-6 16-3-7z"></path></svg>Authorize leg 2 · BUY NO #448 × 320 @ ≤ 0.375</button>
+      <button class="btn" style="justify-content: flex-start;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6 6 18"></path></svg>Cancel leg 1 remainder (190)</button>
+      <button class="btn" style="justify-content: flex-start; border-color: #6b2a27; color: #f5b1ac;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M8 8l-4 4 4 4"></path></svg>Flatten leg 1 · SELL NO #447 × 320 @ ≥ 0.612</button>
+      <button class="btn" style="justify-content: flex-start;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4z"></path></svg>Send to manual review</button>
+      <span class="mut" style="font-size: 11px;">Each action opens its own review → confirm ticket with fresh quotes.</span>
+    </div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="ph"><span class="lbl">Fill log</span><span class="m mut" style="font-size: 11px;">source: paper engine replaying levels.sqlite3 book at event time</span></div>
+  <table>
+    <thead><tr><th>Time</th><th>Leg</th><th>Event</th><th style="text-align: right;">Qty</th><th style="text-align: right;">Price</th><th style="text-align: right;">Fee</th><th>Venue order id</th><th>Client order id</th><th>Reconciled</th></tr></thead>
+    <tbody>
+      <sc-for list="{{fills}}" as="x" hint-placeholder-count="5">
+      <tr><td class="m">{{x.t}}</td><td class="m">{{x.leg}}</td><td>{{x.e}}</td><td class="num">{{x.q}}</td><td class="num">{{x.p}}</td><td class="num">{{x.f}}</td><td class="m mut">{{x.vid}}</td><td class="m mut">{{x.cid}}</td><td><span class="b {{x.rc}}">{{x.r}}</span></td></tr>
+      </sc-for>
+    </tbody>
+  </table>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1120}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const states = ['Reviewed', 'Submitted', 'Acknowledged', 'Partially filled', 'Filled', 'Cancelled', 'Residual', 'Reconciled'];
+    const done = 'display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: 3px; border: 1px solid #2b323d; background: #151a21;';
+    const now = 'display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: 3px; border: 1px solid #5c4420; background: #261e10;';
+    const alert = 'display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: 3px; border: 1px solid #6b2a27; background: #2a1313;';
+    const todo = 'display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; border-radius: 3px; border: 1px dashed #232a34; opacity: 0.6;';
+    const tl = [
+      { leg: 'L1 · #447', cells: [
+        { t: '11:43:10', d: 'by operator', style: done }, { t: '11:43:14.102', d: 'paper', style: done }, { t: '11:43:14.330', d: 'sim ack', style: done },
+        { t: '11:43:15.004', d: '320 / 510', style: now }, { t: '—', d: 'working 190', style: todo }, { t: '—', d: '', style: todo },
+        { t: '11:43:15.010', d: '320 unhedged', style: alert }, { t: '—', d: 'pending', style: todo } ] },
+      { leg: 'L2 · #448', cells: [
+        { t: '11:43:10', d: 'planned 510', style: done }, { t: '—', d: 'held for auth', style: todo }, { t: '—', d: '', style: todo },
+        { t: '—', d: '', style: todo }, { t: '—', d: '', style: todo }, { t: '—', d: '', style: todo },
+        { t: '—', d: '', style: todo }, { t: '—', d: '', style: todo } ] },
+    ];
+    const hit = 'background: #141d28;';
+    const legs = [
+      { name: 'LEG 1', mkt: '#447', state: 'PARTIALLY FILLED', sc: 'a',
+        f: [{ k: 'Venue', v: 'SIG' }, { k: 'Market', v: 'NV-03 Rep.' }, { k: 'Outcome', v: 'NO' }, { k: 'Side', v: 'BUY' }, { k: 'Limit', v: '0.620' }, { k: 'Quantity', v: '510' }, { k: 'Avg fill', v: '0.6193' }, { k: 'Filled', v: '320' }, { k: 'Quote age', v: '0.8s' }],
+        prog: '320 / 510 · 63%', bar: 'width: 63%; height: 8px; background: #e7b75a;',
+        depth: [{ i: 'ask 1', p: '0.618', s: '120', u: '120', st: hit }, { i: 'ask 2', p: '0.620', s: '200', u: '200', st: hit }, { i: 'ask 3', p: '0.624', s: '380', u: '—', st: '' }, { i: 'ask 4', p: '0.630', s: '500', u: '—', st: '' }],
+        note: 'Visible depth at ≤ 0.620 was exhausted at 320. Remaining 190 rests at 0.620 until cancelled.' },
+      { name: 'LEG 2', mkt: '#448', state: 'HELD · AWAITING AUTH', sc: 'a',
+        f: [{ k: 'Venue', v: 'SIG' }, { k: 'Market', v: 'NV-03 Dem.' }, { k: 'Outcome', v: 'NO' }, { k: 'Side', v: 'BUY' }, { k: 'Limit', v: '≤ 0.375' }, { k: 'Quantity', v: '510 → 320' }, { k: 'Break-even', v: '0.3807' }, { k: 'Filled', v: '0' }, { k: 'Quote age', v: '0.8s' }],
+        prog: '0 / 320 · resized from 510', bar: 'width: 0%; height: 8px; background: #e7b75a;',
+        depth: [{ i: 'ask 1', p: '0.368', s: '300', u: '300', st: hit }, { i: 'ask 2', p: '0.370', s: '150', u: '20', st: hit }, { i: 'ask 3', p: '0.374', s: '200', u: '—', st: '' }, { i: 'ask 4', p: '0.381', s: '400', u: '—', st: '' }],
+        note: 'Resized to match leg 1 actual fill (320). Break-even = 1 − 0.6193 − fees. Expected VWAP 0.3681.' },
+    ];
+    const fills = [
+      { t: '11:43:14.102', leg: 'L1', e: 'Submitted (paper)', q: '510', p: '0.620', f: '—', vid: 'paper-8812', cid: 'arb_5d0e-L1', r: 'N/A', rc: 'n' },
+      { t: '11:43:14.330', leg: 'L1', e: 'Acknowledged', q: '—', p: '—', f: '—', vid: 'paper-8812', cid: 'arb_5d0e-L1', r: 'N/A', rc: 'n' },
+      { t: '11:43:14.910', leg: 'L1', e: 'Fill', q: '120', p: '0.618', f: '$0.00', vid: 'paper-8812', cid: 'arb_5d0e-L1', r: 'MATCHED', rc: 'g' },
+      { t: '11:43:15.004', leg: 'L1', e: 'Fill', q: '200', p: '0.620', f: '$0.00', vid: 'paper-8812', cid: 'arb_5d0e-L1', r: 'MATCHED', rc: 'g' },
+      { t: '11:43:15.010', leg: 'L1', e: 'Residual detected · ticket halted', q: '320', p: '—', f: '—', vid: '—', cid: 'arb_5d0e', r: 'OPEN', rc: 'r' },
+    ];
+    return { states, tl, legs, fills };
+  }
+}
+</script>
+</body>
+</html>

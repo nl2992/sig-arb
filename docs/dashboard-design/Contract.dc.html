@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data model and API</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:4px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;height:36px;padding:0 14px;border-bottom:1px solid #232a34;font-size:13px;font-weight:600}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:6px 10px;border-bottom:1px solid #232a34;white-space:nowrap}
+td{padding:4px 10px;border-bottom:1px solid #1a2028;font-size:11.5px;vertical-align:top}
+pre{margin:0;padding:12px 14px;font:11.5px/1.5 'IBM Plex Mono',monospace;color:#c3cad4;white-space:pre}
+.k{color:#8fb3e0}.c{color:#7d8795}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1560px; box-sizing: border-box; background: #0b0e12; padding: 16px; display: grid; grid-template-columns: 640px 1fr; gap: 14px;">
+
+<section class="panel">
+  <div class="ph"><span>Frontend data model</span><span class="m mut" style="font-size: 11px; font-weight: 400;">types.ts</span></div>
+<pre><span class="k">type</span> Venue = 'SIG' | 'KALSHI' | 'POLYMARKET';
+<span class="k">type</span> Mode  = 'research' | 'paper' | 'shadow'
+           | 'human_confirmed' | 'constrained_live';
+<span class="k">type</span> Dec   = string;   <span class="c">// decimal string: prices, money. never float</span>
+
+<span class="k">interface</span> Stamp {
+  exchangeTs: string | null; receivedTs: string;
+  ageMs: number; stale: boolean;     <span class="c">// stale data is flagged, never dropped</span>
+  source: 'live' | 'sqlite' | 'fixture';
+}
+<span class="k">interface</span> Level { price: Dec; size: number }
+<span class="k">interface</span> Book {
+  venue: Venue; venueMarketId: string; outcome: 'YES' | 'NO';
+  bids: Level[]; asks: Level[];      <span class="c">// as published; no imputed levels</span>
+  visibleDepthOnly: true; stamp: Stamp;
+}
+<span class="k">interface</span> Mapping {
+  id: string; sigMarketId: number; venue: Venue; venueMarketId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewer: string | null; reviewedAt: string | null;
+  settlement: SettlementAttr[];
+}
+<span class="k">interface</span> SettlementAttr {
+  attribute: string;
+  excerpt: Partial&lt;Record&lt;Venue, string | null&gt;&gt;;
+  ruleSha: Partial&lt;Record&lt;Venue, string | null&gt;&gt;;
+  review: 'unreviewed' | 'match' | 'differs' | 'unknown';
+}
+<span class="k">interface</span> Fee { amount: Dec | null; status: 'known' | 'unknown';
+              scheduleVersion: string | null }
+<span class="k">interface</span> Leg {
+  venue: Venue; venueMarketId: string; outcome: 'YES' | 'NO';
+  side: 'BUY' | 'SELL'; limit: Dec; qty: number;
+  vwap: Dec | null; availableQty: number; fee: Fee; book: Stamp;
+}
+<span class="c">// the single gate list: dashboard, ticket and /confirm all use it</span>
+<span class="k">type</span> GateId = 'sig_auth' | 'payload_verified' | 'venue_ids'
+  | 'fees_known' | 'mapping_approved' | 'settlement_approved'
+  | 'quotes_fresh' | 'liquidity' | 'no_breaker' | 'risk_limits'
+  | 'recon_clean' | 'kill_switch_off' | 'live_mode';
+<span class="k">interface</span> Gate { id: GateId; pass: boolean; detail: string; at: string }
+<span class="k">interface</span> Block { code: string; message: string; gate: GateId | null }
+
+<span class="k">interface</span> Opportunity {
+  id: string;
+  strategy: 'sig_arb' | 'complete_set' | 'xv_move' | 'rel_value';
+  event: string; legs: Leg[];
+  grossEdge: Dec; netRoi: Dec | null; capital: Dec | null;
+  execQty: number; mappingIds: string[];
+  news: 'clear' | 'watch' | 'breaker';
+  risk: 'low' | 'med' | 'high';
+  state: 'research_only' | 'blocked' | 'paper_eligible'
+       | 'not_ready' | 'exec_ready';          <span class="c">// server-computed</span>
+  gates: Gate[]; blocks: Block[];
+}
+<span class="k">type</span> OrderState = 'reviewed' | 'submitted' | 'acknowledged'
+  | 'partially_filled' | 'filled' | 'cancelled' | 'rejected'
+  | 'residual' | 'reconciled';
+<span class="k">interface</span> Fill { ts: string; qty: number; price: Dec; fee: Dec;
+               venueOrderId: string }
+<span class="k">interface</span> TicketLeg <span class="k">extends</span> Leg {
+  clientOrderId: string; state: OrderState; fills: Fill[];
+  breakEven: Dec | null; worstAcceptable: Dec; residualQty: number;
+}
+<span class="k">interface</span> Ticket {
+  id: string; opportunityId: string; mode: Mode;
+  step: 'review' | 'confirm'; legs: TicketLeg[];
+  quoteExpiresAt: string; gateHash: string;
+  payload: object; payloadVerified: boolean;
+  events: { ts: string; state: OrderState; leg: number;
+            actor: 'operator' | 'system' | 'venue' }[];
+}
+<span class="k">interface</span> SystemStatus {
+  health: 'ok' | 'degraded' | 'down'; lastGoodRefresh: string;
+  db: { ok: boolean; path: string; lastWrite: string };
+  sigAuth: { session: boolean; payloadVerified: boolean };
+  killSwitch: { engaged: boolean; by: string; at: string };
+  mode: Mode; gates: Gate[]; feeds: (Stamp &amp; { name: string })[];
+}</pre>
+</section>
+
+<div style="display: flex; flex-direction: column; gap: 14px;">
+<section class="panel">
+  <div class="ph"><span>Backend API contract</span><span class="m mut" style="font-size: 11px; font-weight: 400;">dashboard.py · JSON over HTTP + /ws/stream</span></div>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>Returns / body</th><th>Guard</th></tr></thead>
+    <tbody>
+      <sc-for list="{{api}}" as="x" hint-placeholder-count="26">
+        <tr><td><span class="b {{x.mc}}">{{x.m}}</span></td><td class="m">{{x.p}}</td><td class="mut">{{x.r}}</td><td style="font-size: 11px;">{{x.g}}</td></tr>
+      </sc-for>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="ph"><span>Stream channels</span><span class="m mut" style="font-size: 11px; font-weight: 400;">WS /ws/stream</span></div>
+  <table>
+    <tbody>
+      <sc-for list="{{ws}}" as="w" hint-placeholder-count="6">
+        <tr><td class="m" style="width: 130px;">{{w.c}}</td><td class="mut">{{w.d}}</td></tr>
+      </sc-for>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="ph"><span>Backend invariants</span><span class="b r">MUST HOLD BEFORE LIVE</span></div>
+  <ol style="margin: 0; padding: 10px 14px 12px 34px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.45;">
+    <sc-for list="{{inv}}" as="i" hint-placeholder-count="9"><li>{{i}}</li></sc-for>
+  </ol>
+</section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const A = (m, p, r, g) => ({ m, p, r, g, mc: m === 'GET' ? 'n' : (m === 'WS' ? 'n' : 'a') });
+    const api = [
+      A('GET', '/api/status', 'SystemStatus', '—'),
+      A('GET', '/api/opportunities', 'Opportunity[] · ?strategy&state', 'state server-computed'),
+      A('GET', '/api/opportunities/{id}', 'detail: books, scenarios, settlement', '—'),
+      A('GET', '/api/books/{venue}/{marketId}', 'Book', 'stale flagged'),
+      A('GET', '/api/history/{marketId}', 'mids + explicit gaps · ?from&to&venue', 'levels.sqlite3 read-only'),
+      A('GET', '/api/mappings', 'Mapping[] · ?status', '—'),
+      A('POST', '/api/mappings/{id}/review', '{decision, attrs[], reviewer}', 'audit log'),
+      A('GET', '/api/news/breakers', 'breaker records', '—'),
+      A('POST', '/api/tickets', '{opportunityId, qty, limits[]} → Ticket', 'fresh quote; 400 if fixture'),
+      A('POST', '/api/tickets/{id}/requote', 'Ticket', 'resets expiry + gateHash'),
+      A('POST', '/api/tickets/{id}/dry-run', 'validated payload; nothing sent', '—'),
+      A('POST', '/api/tickets/{id}/paper', 'simulated fills', 'mode ≥ paper'),
+      A('POST', '/api/tickets/{id}/shadow', 'logged payload', 'mode ≥ shadow'),
+      A('POST', '/api/tickets/{id}/save', 'saved for review', '—'),
+      A('GET', '/api/tickets/{id}/params', 'copyable order parameters', '—'),
+      A('POST', '/api/tickets/{id}/confirm', '{mode, gateHash, confirmText}', '409 gate drift · 423 locked'),
+      A('POST', '/api/tickets/{id}/legs/{n}/authorize', '{limit, qty}', 'per-action confirm token'),
+      A('POST', '/api/tickets/{id}/cancel', '{legs[]}', 'always allowed'),
+      A('POST', '/api/tickets/{id}/flatten', '{leg, limit}', 'per-action confirm token'),
+      A('GET', '/api/execution/orders', 'blotter · ?mode&state', '—'),
+      A('GET', '/api/execution/quality', 'fill rate, latency, slippage by mode', 'no live extrapolation'),
+      A('GET', '/api/execution/authorizations', 'pending leg 2 / flatten requests', '—'),
+      A('GET', '/api/account', 'cash, holdings, orders, P&L, fees', 'SIG read-only'),
+      A('POST', '/api/reconcile', 'breaks[]', '—'),
+      A('POST', '/api/reconcile/fills/{id}/attach', '{ticketId}', 'audit log'),
+      A('GET', '/api/risk/limits', 'limits + usage', '—'),
+      A('PUT', '/api/risk/limits', 'limits', 'confirm + audit; tighten instant'),
+      A('POST', '/api/kill-switch/engage', '{reason}', 'always allowed · idempotent'),
+      A('POST', '/api/kill-switch/release', '{confirmText}', 'all gates + clean recon'),
+    ];
+    const ws = [
+      { c: 'status', d: 'SystemStatus diff on any change; heartbeat every 1s' },
+      { c: 'books', d: 'Book snapshots per subscribed market, with Stamp' },
+      { c: 'opportunities', d: 'upsert / remove; state transitions carry blocks[]' },
+      { c: 'tickets', d: 'Ticket events: order-state transitions and fills' },
+      { c: 'alerts', d: 'residual, breaker, stale feed, auth, db, unmatched fill' },
+      { c: 'audit', d: 'operator actions: mode, limits, mappings, kill switch' },
+    ];
+    const inv = [
+      'Gates are evaluated on the server, atomically, inside /confirm. The client display is advisory only.',
+      'Live endpoints return 423 while PLACE_PAYLOAD_CONFIRMED is false or the kill switch is engaged.',
+      'Any Stamp with source "fixture" can never reach a venue send path.',
+      'A missing book level stays missing. Exec qty is capped by visible depth; no imputation from mid or history.',
+      'Mapping and settlement equivalence need an explicit reviewer decision. Nothing defaults to "match".',
+      'No endpoint sends a hedge or flatten without its own confirm token. Retries reuse clientOrderId.',
+      'Engaging the kill switch never needs confirmation. Releasing it always does.',
+      'Prices and money are decimal strings end to end; the break-even is recomputed on every fill.',
+      'Every state change is written to an append-only audit log with the actor and the gate snapshot.',
+    ];
+    return { api, ws, inv };
+  }
+}
+</script>
+</body>
+</html>

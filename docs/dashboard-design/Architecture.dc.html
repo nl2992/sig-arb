@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Architecture and modes</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:4px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;height:36px;padding:0 14px;border-bottom:1px solid #232a34;font-size:13px;font-weight:600}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:7px 10px;border-bottom:1px solid #232a34;white-space:nowrap;vertical-align:bottom}
+td{padding:6px 10px;border-bottom:1px solid #1a2028;font-size:12px;vertical-align:top}
+pre{margin:0;padding:12px 14px;font:12px/1.55 'IBM Plex Mono',monospace;color:#c3cad4;white-space:pre}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1560px; box-sizing: border-box; background: #0b0e12; padding: 16px; display: grid; grid-template-columns: 620px 1fr; gap: 14px;">
+
+<section class="panel">
+  <div class="ph"><span>Component hierarchy</span><span class="m mut" style="font-size: 11px; font-weight: 400;">React · web/</span></div>
+<pre>&lt;App&gt;                                    <span class="mut">server-pushed state via /ws/stream</span>
+├─ GlobalBanner                          <span class="mut">kill switch · residual · auth · db</span>
+├─ StatusHeader
+│  ├─ SystemStatus  RefreshClock  DbStatus
+│  ├─ SigAuthStatus                      <span class="mut">session + payloadVerified</span>
+│  ├─ KillSwitchState  ModeBadge
+│  └─ EmergencyStopButton               <span class="mut">always enabled</span>
+├─ ControlBar
+│  ├─ ModeSelector                       <span class="mut">locked modes show reason</span>
+│  ├─ RiskLimitStrip
+│  └─ LiveGateSummary
+├─ Tabs
+│  ├─ OpportunitiesView
+│  │  ├─ FilterBar                       <span class="mut">"hide blocked" off by default</span>
+│  │  ├─ OpportunityTable
+│  │  │  └─ OpportunityRow
+│  │  │     ├─ VenueLinks  StatusBadge ×6
+│  │  │     ├─ ExecReadyCell            <span class="mut">state + first reason</span>
+│  │  │     └─ ReviewOrderButton
+│  │  ├─ LiveGatePanel  FeedFreshnessPanel  BlockLogPanel
+│  │  └─ OpportunityDrawer
+│  │     ├─ DrawerHeader → BlockReasonList, actions
+│  │     ├─ BookLadder ×venue            <span class="mut">levels, usedQty, stale</span>
+│  │     ├─ VwapCalculator  FeeBreakdown
+│  │     ├─ SlippagePanel  BreakEvenPanel
+│  │     ├─ PartialFillScenarios  SourceTimestamps
+│  │     ├─ SettlementComparison         <span class="mut">attribute × venue</span>
+│  │     ├─ PriceHistoryChart            <span class="mut">levels.sqlite3, gaps kept</span>
+│  │     └─ NewsBreakerList
+│  ├─ ExecutionView
+│  │  ├─ RouteStatus ×4  ActiveTickets  PendingAuths
+│  │  ├─ OrderBlotter  ExecQuality
+│  │  └─ GateRecheckLog  EventTape
+│  ├─ BooksView → BookLadder grid
+│  ├─ AccountView
+│  │  ├─ LedgerSwitch  AccountStats
+│  │  ├─ Holdings  OpenOrders  ExposureBars
+│  │  └─ ReconTable  UnmatchedFills
+│  ├─ RiskView → LimitEditor  GuardEditor  KillSwitchPanel
+│  ├─ MappingsView → MappingQueue  SettlementReview
+│  └─ LogsView → BlockLog  OrderEventLog  AuditLog
+└─ Overlays
+   ├─ OrderTicket                        <span class="mut">step: review | confirm</span>
+   │  ├─ TicketFields  RemainingLegs  QuoteAgeTimer
+   │  ├─ GateChecklist  ModeRadio  PayloadPreview
+   │  ├─ ArmLiveInput                    <span class="mut">typed confirmation</span>
+   │  └─ TicketActions                   <span class="mut">paper · shadow · dry-run ·
+   │                                      save · copy · live(locked)</span>
+   └─ ArbTicket
+      ├─ OrderTimeline                   <span class="mut">per leg × 8 states</span>
+      ├─ LegPanel ×N → DepthTable  FillProgress
+      ├─ CombinedPosition  ResidualAlert
+      ├─ OperatorActions                 <span class="mut">authorize · cancel ·
+      │                                   flatten · review</span>
+      └─ FillLog</pre>
+</section>
+
+<div style="display: flex; flex-direction: column; gap: 14px;">
+<section class="panel">
+  <div class="ph"><span>Mode separation</span><span class="mut" style="font-size: 11.5px; font-weight: 400;">The mode is server state. The client only requests changes.</span></div>
+  <table>
+    <thead><tr><th style="width: 190px;">Capability</th><th>Research</th><th>Paper</th><th>Shadow</th><th>Human-confirmed</th><th>Constrained-live</th></tr></thead>
+    <tbody>
+      <sc-for list="{{modes}}" as="r" hint-placeholder-count="11">
+        <tr><td>{{r.cap}}</td><sc-for list="{{r.v}}" as="c" hint-placeholder-count="5"><td><span class="b {{c.c}}">{{c.t}}</span></td></sc-for></tr>
+      </sc-for>
+    </tbody>
+  </table>
+  <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; border-top: 1px solid #232a34;">
+    <sc-for list="{{modeDefs}}" as="d" hint-placeholder-count="5">
+      <div style="padding: 10px 12px; border-right: 1px solid #1a2028; display: flex; flex-direction: column; gap: 4px;"><span style="font-weight: 600; font-size: 12.5px;">{{d.n}}</span><span class="mut" style="font-size: 11.5px; line-height: 1.45;">{{d.d}}</span></div>
+    </sc-for>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="ph"><span>Opportunity execution state</span><span class="mut" style="font-size: 11.5px; font-weight: 400;">Server computes state. The client never upgrades a state.</span></div>
+  <table>
+    <thead><tr><th>State</th><th>Condition</th><th>Allowed actions</th></tr></thead>
+    <tbody>
+      <sc-for list="{{opp}}" as="o" hint-placeholder-count="5">
+        <tr><td><span class="b {{o.c}}">{{o.s}}</span></td><td style="line-height: 1.45;">{{o.cond}}</td><td class="mut" style="line-height: 1.45;">{{o.act}}</td></tr>
+      </sc-for>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="ph"><span>Order state machine</span><span class="mut" style="font-size: 11.5px; font-weight: 400;">per leg · every transition audited</span></div>
+  <table>
+    <thead><tr><th>From</th><th>To</th><th>Trigger</th><th>Who</th></tr></thead>
+    <tbody>
+      <sc-for list="{{osm}}" as="o" hint-placeholder-count="10">
+        <tr><td class="m">{{o.f}}</td><td class="m">{{o.t}}</td><td>{{o.why}}</td><td><span class="b {{o.c}}">{{o.who}}</span></td></tr>
+      </sc-for>
+    </tbody>
+  </table>
+</section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const Y = { t: 'YES', c: 'g' }, N = { t: 'NO', c: 'n' }, NEVER = { t: 'NEVER', c: 'r' };
+    const T = (t, c) => ({ t, c });
+    const modes = [
+      { cap: 'Read live market data', v: [Y, Y, Y, Y, Y] },
+      { cap: 'Show opportunities', v: [Y, Y, Y, Y, Y] },
+      { cap: 'Save · copy · dry-run', v: [Y, Y, Y, Y, Y] },
+      { cap: 'Simulated fills', v: [N, Y, N, N, N] },
+      { cap: 'Log would-send payload', v: [N, N, Y, Y, Y] },
+      { cap: 'Send to venue', v: [N, N, N, T('PER ORDER', 'a'), T('PER TICKET', 'a')] },
+      { cap: 'Two-step confirm', v: [T('N/A', 'n'), Y, Y, Y, Y] },
+      { cap: 'All 13 live gates', v: [N, N, N, T('REQUIRED', 'a'), T('REQUIRED', 'a')] },
+      { cap: 'Size cap', v: [T('—', 'n'), T('limits', 'n'), T('limits', 'n'), T('limits', 'n'), T('× 0.25', 'a')] },
+      { cap: 'Auto hedge / flatten', v: [NEVER, NEVER, NEVER, NEVER, NEVER] },
+      { cap: 'App chrome', v: [T('AMBER BADGE', 'a'), T('AMBER BADGE', 'a'), T('AMBER BADGE', 'a'), T('RED FRAME', 'r'), T('RED FRAME', 'r')] },
+    ];
+    const modeDefs = [
+      { n: 'Research', d: 'Signals, books, history. Tickets can be reviewed, saved, copied or dry-run only.' },
+      { n: 'Paper', d: 'Fills simulated against the recorded book at event time. Separate paper ledger.' },
+      { n: 'Shadow', d: 'Exact payload logged at the live timestamp, never sent. Compared against the tape to measure fill odds.' },
+      { n: 'Human-confirmed', d: 'Each order is sent only after review → confirm and all gates pass. Leg 2 needs its own authorization.' },
+      { n: 'Constrained-live', d: 'Operator arms one ticket. Leg 2 may be worked only within the pre-authorized qty and break-even limit. Reduced caps.' },
+    ];
+    const opp = [
+      { s: 'RESEARCH ONLY', c: 'a', cond: 'Edge exists; mapping, settlement or fee review outstanding.', act: 'Drawer, save, copy, dry-run, request review.' },
+      { s: 'BLOCKED', c: 'r', cond: 'Hard failure: stale quote, no depth, circuit breaker, not exhaustive, mapping rejected.', act: 'Review (read-only reasons). Submit is disabled in every mode.' },
+      { s: 'PAPER ELIGIBLE', c: 'a', cond: 'All research gates pass: fresh, depth, mapping, settlement, fees, risk.', act: 'Paper, shadow, dry-run, save, copy.' },
+      { s: 'NOT READY', c: 'r', cond: 'Paper eligible, but a live gate fails (payload, recon, kill switch, mode).', act: 'As paper. Live control shown locked with reasons.' },
+      { s: 'EXEC READY', c: 'g', cond: 'All 13 live gates pass on the server at confirm time and the mode is live.', act: 'Confirm & submit, after typed confirmation.' },
+    ];
+    const H = T('OPERATOR', 'a'), S = T('SYSTEM', 'n'), V = T('VENUE', 'n');
+    const osm = [
+      { f: '—', t: 'reviewed', why: 'Ticket opened; fresh quote pulled; gates snapshotted', who: 'OPERATOR', c: 'a' },
+      { f: 'reviewed', t: 'submitted', why: 'Confirm with gate hash unchanged', who: 'OPERATOR', c: 'a' },
+      { f: 'submitted', t: 'acknowledged', why: 'Venue returns an order id', who: 'VENUE', c: 'n' },
+      { f: 'submitted', t: 'rejected', why: 'Venue error or 4xx; nothing retried automatically', who: 'VENUE', c: 'n' },
+      { f: 'acknowledged', t: 'partially_filled', why: 'Fill with qty below order qty', who: 'VENUE', c: 'n' },
+      { f: 'partially_filled', t: 'filled', why: 'Cumulative fill equals qty', who: 'VENUE', c: 'n' },
+      { f: '* open', t: 'cancelled', why: 'Cancel requested and confirmed by the venue', who: 'OPERATOR', c: 'a' },
+      { f: 'partially_filled', t: 'residual', why: 'Legs unmatched; exposure above zero', who: 'SYSTEM', c: 'n' },
+      { f: 'residual', t: 'reconciled', why: 'Hedged, flattened or accepted; SIG holdings match', who: 'OPERATOR', c: 'a' },
+      { f: 'filled', t: 'reconciled', why: 'Reconciler matches fills to SIG holdings', who: 'SYSTEM', c: 'n' },
+    ];
+    return { modes, modeDefs, opp, osm };
+  }
+}
+</script>
+</body>
+</html>

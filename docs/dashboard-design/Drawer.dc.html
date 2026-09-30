@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Opportunity detail</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0;text-decoration:none}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:4px;border:1px solid #2f3743;background:#161b22;color:#d5dae1;font:500 12px 'IBM Plex Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#1c222b}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:4px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;height:32px;padding:0 10px;border-bottom:1px solid #232a34;font:600 11px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9aa4b2}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:5px 8px;border-bottom:1px solid #232a34;white-space:nowrap}
+td{padding:3px 8px;border-bottom:1px solid #1a2028;font-size:12px;white-space:nowrap}
+.num{text-align:right;font-family:'IBM Plex Mono',monospace}
+.lbl{font:600 10px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a94a3}
+.ask{color:#f0a39e}.bid{color:#8fd0b0}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:4px 10px;border-bottom:1px solid #1a2028;font-size:12px}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1320px; box-sizing: border-box; background: #0b0e12; display: flex;">
+
+<aside style="width: 300px; flex-shrink: 0; border-right: 1px solid #232a34; opacity: 0.5; padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; gap: 6px;">
+  <span class="lbl">Opportunities · 8</span>
+  <sc-for list="{{side}}" as="s" hint-placeholder-count="8">
+    <div style="{{s.style}}"><div style="display: flex; justify-content: space-between;"><span style="font-size: 12px; font-weight: 500;">{{s.e}}</span><span class="m" style="font-size: 11px;">{{s.g}}</span></div><div class="mut m" style="font-size: 10.5px;">{{s.k}}</div></div>
+  </sc-for>
+</aside>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; background: #0d1116; box-shadow: -12px 0 24px rgba(0,0,0,.4);">
+  <div style="padding: 14px 18px 10px 18px; border-bottom: 1px solid #232a34; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span class="b n">XV MOVE</span>
+      <h1 style="margin: 0; font-size: 18px; font-weight: 600;">Pennsylvania Senate — Democrat wins</h1>
+      <span class="m mut" style="font-size: 12px;">opp_7c21e · SIG #412 ↔ Kalshi [TICKER] ↔ Polymarket [SLUG]</span>
+      <div style="flex-grow: 1;"></div>
+      <button class="btn" style="background: #1b2430; border-color: #3d5575;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v4H9zM7 5H5v16h14V5h-2M9 14l2 2 4-4"></path></svg>Review order</button>
+      <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 9h11v11H9zM5 15V4h11"></path></svg>Copy params</button>
+      <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4z"></path></svg>Save for review</button>
+      <button class="btn" aria-label="Close drawer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+      <span class="b a">RESEARCH ONLY</span>
+      <span class="mut" style="font-size: 12px; margin-right: 6px;">Not executable. Blocking:</span>
+      <span class="b a">MAPPING PENDING</span><span class="b r">SETTLEMENT UNVERIFIED</span><span class="b a">PM FEE UNKNOWN</span><span class="b r">PM BOOK STALE 48s</span><span class="b r">SLIP 2.0¢ &gt; 1.0¢</span><span class="b r">PAYLOAD UNVERIFIED</span><span class="b r">KILL SWITCH</span>
+      <div style="flex-grow: 1;"></div>
+      <span class="m" style="font-size: 12px;"><span class="mut">gross</span> 4.71% <span class="mut">· net (if equivalent)</span> 2.83% <span class="mut">· capital</span> $486.24</span>
+    </div>
+  </div>
+
+  <div style="padding: 12px 18px; display: flex; flex-direction: column; gap: 12px;">
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;">
+      <sc-for list="{{books}}" as="bk" hint-placeholder-count="3">
+      <section class="panel" style="{{bk.style}}">
+        <div class="ph"><span style="display: flex; gap: 6px; align-items: center;">{{bk.venue}} <a href="#venue" class="m" style="text-transform: none; letter-spacing: 0; font-weight: 500;">{{bk.id}} ↗</a></span><span class="b {{bk.ageC}}">{{bk.age}}</span></div>
+        <div class="m mut" style="font-size: 10.5px; padding: 4px 10px; border-bottom: 1px solid #1a2028;">{{bk.contract}} · exch {{bk.ts}}</div>
+        <table>
+          <thead><tr><th>Side</th><th style="text-align: right;">Price</th><th style="text-align: right;">Size</th><th style="text-align: right;">Cum</th><th style="text-align: right;">Used</th></tr></thead>
+          <tbody>
+          <sc-for list="{{bk.asks}}" as="l" hint-placeholder-count="6">
+            <tr style="{{l.st}}"><td class="ask" style="font-size: 11px;">ASK</td><td class="num ask">{{l.p}}</td><td class="num">{{l.s}}</td><td class="num mut">{{l.c}}</td><td class="num">{{l.u}}</td></tr>
+          </sc-for>
+          <tr><td colspan="5" class="m" style="text-align: center; font-size: 11px; background: #0b0e12; color: #a3acb9;">spread {{bk.spread}} · mid {{bk.mid}}</td></tr>
+          <sc-for list="{{bk.bids}}" as="l" hint-placeholder-count="6">
+            <tr style="{{l.st}}"><td class="bid" style="font-size: 11px;">BID</td><td class="num bid">{{l.p}}</td><td class="num">{{l.s}}</td><td class="num mut">{{l.c}}</td><td class="num">{{l.u}}</td></tr>
+          </sc-for>
+          </tbody>
+        </table>
+        <div class="mut" style="font-size: 11px; padding: 6px 10px;">{{bk.foot}}</div>
+      </section>
+      </sc-for>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;">
+      <section class="panel">
+        <div class="ph"><span>VWAP · qty 500</span><label style="display: flex; gap: 4px; align-items: center; text-transform: none; letter-spacing: 0; font-weight: 500;">qty <input type="number" value="500" style="width: 60px; height: 20px; background: #0b0e12; border: 1px solid #2f3743; color: #d5dae1; border-radius: 3px; font: 11px 'IBM Plex Mono';"></label></div>
+        <div class="kv"><span class="mut">L1 SIG buy YES</span><span class="m">200@.470 + 250@.480 + 50@.490</span></div>
+        <div class="kv"><span class="mut">L1 VWAP</span><span class="m">0.4770 · $238.50</span></div>
+        <div class="kv"><span class="mut">L2 Kalshi sell YES</span><span class="m">150@.530 + 300@.520 + 50@.510</span></div>
+        <div class="kv"><span class="mut">L2 VWAP (NO cost)</span><span class="m">0.5220 → 0.4780 · $239.00</span></div>
+        <div class="kv"><span class="mut">Pair cost / payoff</span><span class="m">0.9550 / 1.0000</span></div>
+        <div class="kv" style="border-bottom: none;"><span class="mut">Gross edge</span><span class="m">4.71%</span></div>
+      </section>
+      <section class="panel">
+        <div class="ph"><span>Fees by venue</span><span class="b a">PARTIAL</span></div>
+        <div class="kv"><span>SIG</span><span class="m">$0.00 <span class="b g">KNOWN</span></span></div>
+        <div class="kv"><span>Kalshi taker</span><span class="m">$8.74 <span class="b g">KNOWN</span></span></div>
+        <div class="kv"><span class="mut" style="font-size: 11px;">ceil(0.07 × 500 × .522 × .478)</span><span class="m mut" style="font-size: 11px;">sched pinned 09-28</span></div>
+        <div class="kv"><span>Polymarket</span><span class="m">— <span class="b a">UNKNOWN</span></span></div>
+        <div class="kv"><span class="mut">Net P&amp;L if equivalent</span><span class="m">+$13.76</span></div>
+        <div class="kv" style="border-bottom: none;"><span class="mut">Net ROI</span><span class="m">2.83%</span></div>
+      </section>
+      <section class="panel">
+        <div class="ph"><span>Slippage</span><span class="b r">OVER LIMIT</span></div>
+        <div class="kv"><span class="mut">L1 expected vs top</span><span class="m">0.7¢</span></div>
+        <div class="kv"><span class="mut">L1 worst level</span><span class="m" style="color: #f08079;">2.0¢</span></div>
+        <div class="kv"><span class="mut">L2 expected vs top</span><span class="m">0.8¢</span></div>
+        <div class="kv"><span class="mut">L2 worst level</span><span class="m" style="color: #f08079;">2.0¢</span></div>
+        <div class="kv"><span class="mut">Max allowed</span><span class="m">1.0¢</span></div>
+        <div class="kv" style="border-bottom: none;"><span class="mut">Qty inside limit</span><span class="m">450</span></div>
+      </section>
+      <section class="panel">
+        <div class="ph"><span>Final-leg break-even</span></div>
+        <div style="padding: 10px; display: flex; flex-direction: column; gap: 6px;">
+          <span class="m" style="font-size: 15px;">BUY NO ≤ 0.505</span>
+          <span class="m mut" style="font-size: 12px;">≡ SELL YES ≥ 0.495 on Kalshi</span>
+          <span class="mut" style="font-size: 11.5px; white-space: normal;">After L1 fill at 0.4770 and Kalshi fee ≈ 1.75¢/ct. Recomputed on every actual fill.</span>
+          <span class="mut" style="font-size: 11.5px; white-space: normal;">Assumes identical settlement, which is <span style="color: #f08079;">not verified</span>. Mismatch loss is not priced.</span>
+        </div>
+      </section>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 3fr 2fr; gap: 10px;">
+      <section class="panel">
+        <div class="ph"><span>Partial-fill scenarios</span><span class="m mut" style="text-transform: none; letter-spacing: 0;">L1 = SIG, L2 = Kalshi</span></div>
+        <table>
+          <thead><tr><th>Scenario</th><th style="text-align: right;">L1 fill</th><th style="text-align: right;">L1 avg</th><th style="text-align: right;">L2 fill</th><th style="text-align: right;">L2 NO avg</th><th style="text-align: right;">Residual</th><th style="text-align: right;">At risk</th><th style="text-align: right;">P&amp;L</th></tr></thead>
+          <tbody>
+          <sc-for list="{{scen}}" as="x" hint-placeholder-count="5">
+            <tr><td>{{x.n}}</td><td class="num">{{x.f1}}</td><td class="num">{{x.a1}}</td><td class="num">{{x.f2}}</td><td class="num">{{x.a2}}</td><td class="num" style="{{x.rs}}">{{x.res}}</td><td class="num">{{x.risk}}</td><td class="num" style="{{x.ps}}">{{x.pnl}}</td></tr>
+          </sc-for>
+          </tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <div class="ph"><span>Source timestamps</span><span class="m mut" style="text-transform: none; letter-spacing: 0;">ET · exchange / received</span></div>
+        <sc-for list="{{ts}}" as="t" hint-placeholder-count="7">
+          <div class="kv"><span>{{t.n}}</span><span class="m" style="{{t.st}}">{{t.v}}</span></div>
+        </sc-for>
+      </section>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 5fr 4fr 3fr; gap: 10px;">
+      <section class="panel">
+        <div class="ph"><span>Settlement rules — never inferred</span><span class="b r">1 DIFFERS · 4 UNREVIEWED</span></div>
+        <table>
+          <thead><tr><th>Attribute</th><th>SIG #412</th><th>Kalshi</th><th>Polymarket</th><th>Review</th></tr></thead>
+          <tbody>
+          <sc-for list="{{rules}}" as="r" hint-placeholder-count="6">
+            <tr><td>{{r.a}}</td><td class="mut" style="font-size: 11px;">{{r.s}}</td><td class="mut" style="font-size: 11px;">{{r.k}}</td><td class="mut" style="font-size: 11px;">{{r.p}}</td><td><span class="b {{r.c}}">{{r.v}}</span></td></tr>
+          </sc-for>
+          </tbody>
+        </table>
+        <div style="display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid #232a34;"><button class="btn" style="height: 24px; font-size: 11px;">Open full rule text</button><button class="btn" style="height: 24px; font-size: 11px;">Request reviewer approval</button><button class="btn" style="height: 24px; font-size: 11px;">Reject mapping</button></div>
+      </section>
+      <section class="panel">
+        <div class="ph"><span>Mid history · 24h · levels.sqlite3</span><span style="display: flex; gap: 10px; text-transform: none; letter-spacing: 0; font-weight: 500;"><span style="color: #c9d1dc;">— SIG</span><span style="color: #7fa7d9;">— Kalshi</span><span style="color: #c49a5a;">- - PM</span></span></div>
+        <svg width="100%" height="200" viewBox="0 0 520 200" preserveAspectRatio="none" role="img" aria-label="24 hour mid-price history for SIG, Kalshi and Polymarket">
+          <rect x="430" y="10" width="80" height="160" fill="#2a1313" opacity="0.6"></rect>
+          <text x="436" y="24" fill="#f08079" font-size="10" font-family="IBM Plex Mono">PM stale</text>
+          <line x1="40" y1="40" x2="510" y2="40" stroke="#1f2630"></line>
+          <line x1="40" y1="90" x2="510" y2="90" stroke="#1f2630"></line>
+          <line x1="40" y1="140" x2="510" y2="140" stroke="#1f2630"></line>
+          <text x="4" y="44" fill="#8a94a3" font-size="10" font-family="IBM Plex Mono">0.55</text>
+          <text x="4" y="94" fill="#8a94a3" font-size="10" font-family="IBM Plex Mono">0.50</text>
+          <text x="4" y="144" fill="#8a94a3" font-size="10" font-family="IBM Plex Mono">0.45</text>
+          <polyline points="{{pSig}}" fill="none" stroke="#c9d1dc" stroke-width="1.6"></polyline>
+          <polyline points="{{pK}}" fill="none" stroke="#7fa7d9" stroke-width="1.6"></polyline>
+          <polyline points="{{pPm}}" fill="none" stroke="#c49a5a" stroke-width="1.4" stroke-dasharray="4 3"></polyline>
+          <text x="40" y="190" fill="#8a94a3" font-size="10" font-family="IBM Plex Mono">09-29 12:00</text>
+          <text x="250" y="190" fill="#8a94a3" font-size="10" font-family="IBM Plex Mono">00:00</text>
+          <text x="470" y="190" fill="#8a94a3" font-size="10" font-family="IBM Plex Mono">now</text>
+        </svg>
+        <div class="mut" style="font-size: 11px; padding: 0 10px 8px 10px;">Gaps are drawn as gaps. No interpolation across missing snapshots.</div>
+      </section>
+      <section class="panel">
+        <div class="ph"><span>News &amp; circuit breakers</span><span class="b g">NONE ACTIVE</span></div>
+        <sc-for list="{{news}}" as="nw" hint-placeholder-count="5">
+          <div style="padding: 6px 10px; border-bottom: 1px solid #1a2028; display: flex; flex-direction: column; gap: 3px;">
+            <div style="display: flex; justify-content: space-between;"><span class="m mut" style="font-size: 11px;">{{nw.t}}</span><span class="b {{nw.c}}">{{nw.v}}</span></div>
+            <span style="font-size: 12px; white-space: normal;">{{nw.h}}</span>
+          </div>
+        </sc-for>
+      </section>
+    </div>
+  </div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dim = 'opacity: 0.35;';
+    const hit = 'background: #141d28;';
+    const side = [
+      ['Delaware Senate', '3.09%', 'SIG ARB · NOT READY'], ['Arizona Governor', '1.80%', 'COMPLETE-SET · BLOCKED'],
+      ['Pennsylvania Senate', '4.71%', 'XV MOVE · RESEARCH'], ['Michigan Senate', '2.60%', 'REL VALUE · STALE'],
+      ['Ohio Senate', '0.90%', 'SIG ARB · NEWS CB'], ['Georgia Senate', '5.10%', 'XV MOVE · NO DEPTH'],
+      ['Nevada NV-03', '1.20%', 'COMPLETE-SET · PAPER'], ['North Carolina Gov', '1.95%', 'REL VALUE · REJECTED'],
+    ].map((r, i) => ({ e: r[0], g: r[1], k: r[2], style: 'padding: 6px 8px; border-radius: 3px; ' + (i === 2 ? 'background: #1b2430; outline: 1px solid #3d5575;' : '') }));
+    const lv = (arr, usedFn) => { let c = 0; return arr.map(([p, s], i) => { c += s; const u = usedFn ? usedFn(i) : ''; return { p: p.toFixed(3), s: s.toLocaleString(), c: c.toLocaleString(), u, st: u ? hit : '' }; }); };
+    const sigAsks = lv([[0.47, 200], [0.48, 250], [0.49, 300], [0.50, 400], [0.51, 150], [0.52, 600]], (i) => ['200', '250', '50'][i] || '').reverse();
+    const sigBids = lv([[0.46, 180], [0.45, 320], [0.44, 260], [0.43, 500], [0.42, 210], [0.40, 900]]);
+    const kAsks = lv([[0.54, 260], [0.55, 400], [0.56, 310], [0.57, 500]]).reverse();
+    const kBids = lv([[0.53, 150], [0.52, 300], [0.51, 220], [0.50, 800]], (i) => ['150', '300', '50'][i] || '');
+    const pAsks = lv([[0.535, 800], [0.54, 1500], [0.545, 2000], [0.55, 900], [0.56, 4000]]).reverse();
+    const pBids = lv([[0.525, 1200], [0.52, 900], [0.515, 2400], [0.51, 1000], [0.505, 3100]]);
+    const books = [
+      { venue: 'SIG', id: '#412', contract: 'YES · Democrat wins PA Sen', ts: '11:42:06.912', age: '0.9s FRESH', ageC: 'g', asks: sigAsks, bids: sigBids, spread: '1.0¢', mid: '0.465', foot: 'Leg 1 · BUY YES. All 6 visible levels per side shown; end of visible book.', style: '' },
+      { venue: 'KALSHI', id: '[TICKER]', contract: 'YES · mapping PENDING', ts: '11:42:05.804', age: '1.2s FRESH', ageC: 'g', asks: kAsks, bids: kBids, spread: '1.0¢', mid: '0.535', foot: 'Leg 2 · SELL YES (= BUY NO). Public depth: 4 levels. Deeper liquidity not assumed.', style: '' },
+      { venue: 'POLYMARKET', id: '[SLUG]', contract: 'Yes token · mapping PENDING', ts: '11:41:19.220', age: '48.0s STALE', ageC: 'r', asks: pAsks, bids: pBids, spread: '1.0¢', mid: '0.530', foot: 'Reference only. Stale book is shown but excluded from every calculation.', style: 'outline: 1px solid #6b2a27;' },
+    ];
+    const good = 'color: #5fd39a;', bad = 'color: #f08079;', amb = 'color: #e7b75a;';
+    const scen = [
+      { n: 'Both legs full', f1: '500', a1: '0.4770', f2: '500', a2: '0.4780', res: '0', risk: '$0', pnl: '+$13.76', rs: '', ps: good },
+      { n: 'L1 60% → L2 resized', f1: '300', a1: '0.4733', f2: '300', a2: '0.4750', res: '0', risk: '$0', pnl: '+$10.26', rs: '', ps: good },
+      { n: 'L1 30% → L2 resized', f1: '150', a1: '0.4700', f2: '150', a2: '0.4700', res: '0', risk: '$0', pnl: '+$6.38', rs: '', ps: good },
+      { n: 'L1 full, L2 50%', f1: '500', a1: '0.4770', f2: '250', a2: '0.4760', res: '250 YES SIG', risk: '$119.25', pnl: 'MTM −$4.25', rs: amb, ps: bad },
+      { n: 'L1 full, L2 0%', f1: '500', a1: '0.4770', f2: '0', a2: '—', res: '500 YES SIG', risk: '$238.50', pnl: 'MTM −$8.50', rs: bad, ps: bad },
+    ];
+    const ts = [
+      { n: 'SIG book', v: '11:42:06.912 / 11:42:07.004', st: '' },
+      { n: 'Kalshi book', v: '11:42:05.804 / 11:42:05.911', st: '' },
+      { n: 'Polymarket book', v: '11:41:19.220 / 11:41:19.460', st: bad },
+      { n: 'SIG rules captured', v: '09-29 14:02 · sha 3f9a…', st: '' },
+      { n: 'Kalshi fee schedule', v: 'pinned 09-28', st: '' },
+      { n: 'Polymarket fee schedule', v: 'not captured', st: amb },
+      { n: 'Mapping reviewed', v: 'never', st: amb },
+    ];
+    const rules = [
+      { a: 'Winner definition', s: '[rule excerpt §1]', k: '[rule excerpt]', p: '[rule excerpt]', v: 'UNREVIEWED', c: 'a' },
+      { a: 'Party vs named candidate', s: 'party', k: 'party', p: 'named candidate', v: 'DIFFERS', c: 'r' },
+      { a: 'Resolution source', s: '[source]', k: '[source]', p: '[source]', v: 'UNREVIEWED', c: 'a' },
+      { a: 'Resolution deadline', s: '[date]', k: '[date]', p: 'not parsed', v: 'UNKNOWN', c: 'r' },
+      { a: 'Recount / runoff', s: '[rule]', k: '[rule]', p: '[rule]', v: 'UNREVIEWED', c: 'a' },
+      { a: 'Void / cancellation', s: '[rule]', k: '[rule]', p: '[rule]', v: 'UNREVIEWED', c: 'a' },
+    ];
+    const line = (base, amp, ph, n, drift) => Array.from({ length: n }, (_, i) => { const x = 40 + i * (470 / 47); const v = base + drift * i / 47 + amp * Math.sin(i / 4 + ph) + 0.004 * Math.sin(i * 1.7 + ph); return x.toFixed(1) + ',' + (90 - (v - 0.5) * 1000).toFixed(1); }).join(' ');
+    const news = [
+      { t: '11:20 · news.py', h: 'New public poll released for PA Senate. Classified low-impact.', v: 'WATCH', c: 'a' },
+      { t: '10-06 19:30–22:00', h: 'Scheduled debate window. Circuit breaker pre-armed for SIG #412 and mapped markets.', v: 'ARMED', c: 'a' },
+      { t: '09-29 16:05 · CB-412-01', h: 'Breaker fired on 4.1¢ SIG mid move in 90s; cleared after 30 min.', v: 'CLEARED', c: 'n' },
+      { t: '09-28 09:00', h: 'No material candidate or rule-change news since mapping created.', v: 'OK', c: 'g' },
+    ];
+    return { side, books, scen, ts, rules, news, pSig: line(0.46, 0.01, 0, 48, 0.005), pK: line(0.525, 0.008, 1, 48, 0.01), pPm: line(0.52, 0.009, 2, 40, 0.012) };
+  }
+}
+</script>
+</body>
+</html>

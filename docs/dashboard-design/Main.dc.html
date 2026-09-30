@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sig_arb dashboard</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0;text-decoration:none}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:4px;border:1px solid #2f3743;background:#161b22;color:#d5dae1;font:500 12px 'IBM Plex Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#1c222b}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:4px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 12px;border-bottom:1px solid #232a34;font:600 11px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9aa4b2}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:7px 6px;border-bottom:1px solid #232a34;white-space:nowrap;background:#0e1217}
+td{padding:5px 6px;border-bottom:1px solid #1a2028;font-size:12px;white-space:nowrap;vertical-align:middle}
+.num{text-align:right;font-family:'IBM Plex Mono',monospace}
+.lbl{font:600 10px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a94a3}
+.sep{width:1px;align-self:stretch;background:#232a34}
+.vl{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 5px;border-radius:3px;border:1px solid #2b323d;font:600 10px 'IBM Plex Mono',monospace;color:#8fb3e0}
+.vx{display:inline-flex;align-items:center;height:20px;padding:0 5px;border-radius:3px;border:1px dashed #2b323d;font:600 10px 'IBM Plex Mono',monospace;color:#5b6472}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1000px; box-sizing: border-box; background: #0b0e12; display: flex; flex-direction: column;">
+
+<header style="display: flex; align-items: center; gap: 14px; height: 52px; padding: 0 16px; background: #0e1217; border-bottom: 1px solid #232a34;">
+  <div style="display: flex; align-items: baseline; gap: 8px;">
+    <span class="m" style="font-size: 15px; font-weight: 600; color: #e8ecf1;">sig_arb</span>
+    <span class="mut" style="font-size: 12px;">ops console</span>
+  </div>
+  <span class="b a">MOCK FIXTURE DATA</span>
+  <div class="sep"></div>
+  <div style="display: flex; flex-direction: column; gap: 3px;"><span class="lbl">System</span><span class="b a">DEGRADED · 1 feed stale</span></div>
+  <div class="sep"></div>
+  <div style="display: flex; flex-direction: column; gap: 3px;"><span class="lbl">Last good refresh</span><span class="m" style="font-size: 12px;">11:42:07 ET <span class="mut">· 2.8s ago</span></span></div>
+  <div class="sep"></div>
+  <div style="display: flex; flex-direction: column; gap: 3px;"><span class="lbl">Database</span><span style="display: flex; gap: 6px; align-items: center;"><span class="b g">OK</span><span class="m mut" style="font-size: 11px;">logs/levels.sqlite3 · WAL · 41,208 snaps</span></span></div>
+  <div class="sep"></div>
+  <div style="display: flex; flex-direction: column; gap: 3px;"><span class="lbl">SIG auth</span><span style="display: flex; gap: 4px;"><span class="b g">SESSION OK</span><span class="b a">PAYLOAD UNVERIFIED</span></span></div>
+  <div class="sep"></div>
+  <div style="display: flex; flex-direction: column; gap: 3px;"><span class="lbl">Kill switch</span><span class="b r">ENGAGED · live blocked</span></div>
+  <div class="sep"></div>
+  <div style="display: flex; flex-direction: column; gap: 3px;"><span class="lbl">Mode</span><span class="b a">RESEARCH</span></div>
+  <div style="flex-grow: 1;"></div>
+  <button class="btn" aria-label="Refresh all feeds"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"></path></svg>Refresh</button>
+  <button class="btn" style="height: 34px; background: #3a1414; border-color: #8a2f2a; color: #ffb3ad; font-weight: 600;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3v9M6.3 7a8 8 0 1 0 11.4 0"></path></svg>EMERGENCY STOP</button>
+</header>
+
+<div style="display: flex; align-items: center; gap: 16px; height: 44px; padding: 0 16px; border-bottom: 1px solid #232a34; background: #0c1015;">
+  <div role="group" aria-label="Execution mode" style="display: flex; border: 1px solid #2f3743; border-radius: 4px; overflow: hidden;">
+    <button class="btn" style="border: none; border-radius: 0; background: #261e10; color: #e7b75a; height: 26px;">Research</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; height: 26px;">Paper</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; height: 26px;">Shadow</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; height: 26px;" disabled>Human-confirmed</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; height: 26px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 11h12v10H6zM8 11V8a4 4 0 0 1 8 0v3"></path></svg>Constrained-live</button>
+  </div>
+  <div class="sep"></div>
+  <div style="display: flex; gap: 14px; align-items: center; font-size: 11px;" class="m">
+    <span><span class="mut">per-trade</span> $1,000</span>
+    <span><span class="mut">daily loss</span> $0 / $500</span>
+    <span><span class="mut">SIG exp</span> $0 / $5,000</span>
+    <span><span class="mut">Kalshi</span> $0 / $2,000</span>
+    <span><span class="mut">Poly</span> $0 / $2,000</span>
+    <span><span class="mut">max age</span> 5.0s</span>
+    <span><span class="mut">max slip</span> 1.0¢</span>
+    <span><span class="mut">max residual</span> 50 ct</span>
+    <span class="b a">MANUAL APPROVAL ON</span>
+  </div>
+  <div style="flex-grow: 1;"></div>
+  <span class="b r">LIVE GATES 3 / 13</span>
+</div>
+
+<div style="display: flex; align-items: center; gap: 4px; height: 42px; padding: 0 16px; border-bottom: 1px solid #232a34;">
+  <button class="btn" style="background: #1c222b; border-color: #3a4452;">Opportunities <span class="m mut">8</span></button>
+  <button class="btn" style="border-color: transparent; background: transparent;">Execution <span class="b r">1 residual</span></button>
+  <button class="btn" style="border-color: transparent; background: transparent;">Books</button>
+  <button class="btn" style="border-color: transparent; background: transparent;">Account &amp; recon</button>
+  <button class="btn" style="border-color: transparent; background: transparent;">Risk</button>
+  <button class="btn" style="border-color: transparent; background: transparent;">Mappings <span class="b a">3 pending</span></button>
+  <button class="btn" style="border-color: transparent; background: transparent;">Logs</button>
+  <div class="sep" style="margin: 8px 8px;"></div>
+  <span class="lbl" style="margin-right: 4px;">Strategy</span>
+  <button class="btn" style="height: 24px; font-size: 11px;">All</button>
+  <button class="btn" style="height: 24px; font-size: 11px; background: transparent;">SIG arb</button>
+  <button class="btn" style="height: 24px; font-size: 11px; background: transparent;">Complete-set</button>
+  <button class="btn" style="height: 24px; font-size: 11px; background: transparent;">XV move</button>
+  <button class="btn" style="height: 24px; font-size: 11px; background: transparent;">Rel value</button>
+  <label style="display: flex; align-items: center; gap: 6px; margin-left: 10px; font-size: 12px; color: #8a94a3;"><input type="checkbox"> Hide blocked</label>
+  <div style="flex-grow: 1;"></div>
+  <label style="display: flex; align-items: center; gap: 6px;"><span class="lbl">Find</span><input type="search" placeholder="event, market, ticker" style="height: 26px; width: 200px; background: #0e1217; border: 1px solid #2f3743; border-radius: 4px; color: #d5dae1; padding: 0 8px; font: 12px 'IBM Plex Sans';"></label>
+  <span class="m mut" style="font-size: 11px; margin-left: 10px;">SIG trading opens Thu Oct 1 12:00 ET</span>
+</div>
+
+<div style="padding: 10px 16px 0 16px;">
+<div class="panel">
+<table>
+<thead><tr>
+  <th>Strategy</th><th>Event / market</th><th>Venues</th><th>Direction</th>
+  <th style="text-align: right;">Gross</th><th style="text-align: right;">Net ROI</th><th style="text-align: right;">Capital</th><th style="text-align: right;">Exec qty</th><th style="text-align: right;">Bid / ask liq</th><th style="text-align: right;">Quote age</th>
+  <th>Mapping</th><th>Settlement</th><th>Fees</th><th>News</th><th>Exec risk</th><th>Execution-ready</th><th></th>
+</tr></thead>
+<tbody>
+<sc-for list="{{rows}}" as="row" hint-placeholder-count="8">
+<tr style="{{row.trStyle}}">
+  <td><span class="b n">{{row.strat}}</span></td>
+  <td><div style="font-weight: 500;">{{row.event}}</div><div class="mut" style="font-size: 11px;">{{row.market}}</div></td>
+  <td><div style="display: flex; gap: 3px;">
+    <sc-if value="{{row.sig}}" hint-placeholder-val="{{true}}"><a class="vl" href="#sig">SIG<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17 17 7M8 7h9v9"></path></svg></a></sc-if>
+    <sc-if value="{{row.k}}" hint-placeholder-val="{{true}}"><a class="vl" href="#kalshi">K<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17 17 7M8 7h9v9"></path></svg></a></sc-if>
+    <sc-if value="{{row.noK}}" hint-placeholder-val="{{false}}"><span class="vx">K —</span></sc-if>
+    <sc-if value="{{row.pm}}" hint-placeholder-val="{{true}}"><a class="vl" href="#polymarket">PM<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M7 17 17 7M8 7h9v9"></path></svg></a></sc-if>
+    <sc-if value="{{row.noPm}}" hint-placeholder-val="{{false}}"><span class="vx">PM —</span></sc-if>
+  </div></td>
+  <td class="m" style="font-size: 11px;">{{row.dir}}</td>
+  <td class="num">{{row.gross}}</td>
+  <td class="num" style="{{row.netStyle}}">{{row.net}}</td>
+  <td class="num">{{row.cap}}</td>
+  <td class="num">{{row.qty}}</td>
+  <td class="num" style="{{row.liqStyle}}">{{row.liq}}</td>
+  <td class="num" style="{{row.ageStyle}}">{{row.age}}</td>
+  <td><span class="b {{row.mapC}}">{{row.map}}</span></td>
+  <td><span class="b {{row.setC}}">{{row.set}}</span></td>
+  <td><span class="b {{row.feeC}}">{{row.fee}}</span></td>
+  <td><span class="b {{row.newsC}}">{{row.news}}</span></td>
+  <td><span class="b {{row.riskC}}">{{row.risk}}</span></td>
+  <td><div><span class="b {{row.stateC}}">{{row.state}}</span></div><div class="mut" style="font-size: 10.5px; margin-top: 3px;">{{row.reason}}</div></td>
+  <td><button class="btn" style="height: 26px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v4H9zM7 5H5v16h14V5h-2M9 14l2 2 4-4"></path></svg>Review order</button></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 10px 16px 16px 16px; flex-grow: 1;">
+  <section class="panel">
+    <div class="ph"><span>Live execution gates</span><span class="b r">3 / 13 PASS</span></div>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; padding: 8px 12px; font-size: 12px;">
+      <sc-for list="{{gates}}" as="g" hint-placeholder-count="11">
+        <div style="display: flex; justify-content: space-between; align-items: center; height: 26px; border-bottom: 1px solid #1a2028;"><span>{{g.name}}</span><span class="b {{g.c}}">{{g.v}}</span></div>
+      </sc-for>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Feed freshness</span><span class="m mut" style="text-transform: none; letter-spacing: 0;">threshold 5.0s</span></div>
+    <table>
+      <sc-for list="{{feeds}}" as="f" hint-placeholder-count="7">
+        <tr><td>{{f.name}}</td><td class="m mut" style="font-size: 11px;">{{f.src}}</td><td class="num" style="{{f.ageStyle}}">{{f.age}}</td><td style="text-align: right;"><span class="b {{f.c}}">{{f.v}}</span></td></tr>
+      </sc-for>
+    </table>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Recent block reasons</span><button class="btn" style="height: 22px; font-size: 11px;">View log</button></div>
+    <table>
+      <sc-for list="{{blocks}}" as="k" hint-placeholder-count="7">
+        <tr><td class="m mut" style="font-size: 11px;">{{k.t}}</td><td style="font-size: 11.5px;">{{k.what}}</td><td style="text-align: right;"><span class="b r">{{k.code}}</span></td></tr>
+      </sc-for>
+    </table>
+  </section>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const red = 'color: #f08079;';
+    const R = (o) => Object.assign({ sig: true, k: false, pm: false, noK: true, noPm: true, trStyle: '', netStyle: '', liqStyle: '', ageStyle: '' }, o);
+    const rows = [
+      R({ strat: 'SIG ARB', event: 'Delaware Senate', market: 'R #386 · D #353 · I #391', dir: 'SELL_ALL · NO×3', gross: '3.09%', net: '2.41%', cap: '$970', qty: '1,000', liq: '1.4k / 1.0k', age: '2.1s', map: 'N/A · 1 VENUE', mapC: 'n', set: 'EXCLUSIVE ✓', setC: 'g', fee: 'KNOWN', feeC: 'g', news: 'CLEAR', newsC: 'g', risk: 'LOW', riskC: 'g', state: 'NOT READY · 4', stateC: 'r', reason: 'payload · recon · kill switch · mode' }),
+      R({ strat: 'COMPLETE-SET', event: 'Arizona Governor', market: 'R #402 · D #404 · I #405', dir: 'BUY_ALL · YES×3', gross: '1.80%', net: '0.62%', cap: '$1,000', qty: '1,020', liq: '0.9k / 1.1k', age: '1.4s', map: 'N/A · 1 VENUE', mapC: 'n', set: 'NOT EXHAUSTIVE', setC: 'r', fee: 'KNOWN', feeC: 'g', news: 'CLEAR', newsC: 'g', risk: 'HIGH', riskC: 'r', state: 'BLOCKED', stateC: 'r', reason: 'race not in exhaustive.txt' }),
+      R({ strat: 'XV MOVE', event: 'Pennsylvania Senate', market: 'Democrat wins · SIG #412', k: true, pm: true, noK: false, noPm: false, dir: 'BUY YES SIG / NO K', gross: '4.71%', net: '2.83%', cap: '$486', qty: '500', liq: '0.7k / 0.5k', age: '1.2s', map: 'PENDING', mapC: 'a', set: 'UNVERIFIED', setC: 'r', fee: 'PARTIAL', feeC: 'a', news: 'CLEAR', newsC: 'g', risk: 'MED', riskC: 'a', state: 'RESEARCH ONLY', stateC: 'a', reason: 'mapping + settlement need review', trStyle: 'background: #141a22; box-shadow: inset 2px 0 0 #8fb3e0;' }),
+      R({ strat: 'REL VALUE', event: 'Michigan Senate', market: 'Republican wins · SIG #418', pm: true, noPm: false, dir: 'SELL YES SIG / YES PM', gross: '2.60%', net: '1.10%', cap: '$880', qty: '400', liq: '0.8k / 0.4k', age: 'PM 48.0s', ageStyle: red, map: 'APPROVED', mapC: 'g', set: 'REVIEW', setC: 'a', fee: 'UNKNOWN', feeC: 'r', news: 'CLEAR', newsC: 'g', risk: 'MED', riskC: 'a', state: 'BLOCKED · STALE', stateC: 'r', reason: 'Polymarket quote 48s > 5s' }),
+      R({ strat: 'SIG ARB', event: 'Ohio Senate', market: 'R #421 · D #422', dir: 'SELL_ALL · NO×2', gross: '0.90%', net: '0.21%', cap: '$990', qty: '1,000', liq: '2.1k / 1.6k', age: '0.9s', map: 'N/A · 1 VENUE', mapC: 'n', set: 'EXCLUSIVE ✓', setC: 'g', fee: 'KNOWN', feeC: 'g', news: 'CB ACTIVE', newsC: 'r', risk: 'MED', riskC: 'a', state: 'BLOCKED · NEWS', stateC: 'r', reason: 'circuit breaker until 13:00 ET' }),
+      R({ strat: 'XV MOVE', event: 'Georgia Senate', market: 'Republican wins · SIG #430', k: true, pm: true, noK: false, noPm: false, dir: 'BUY YES K / NO SIG', gross: '5.10%', net: '—', cap: '—', qty: '0', liq: '— / no depth', liqStyle: red, age: '1.8s', map: 'PENDING', mapC: 'a', set: 'UNVERIFIED', setC: 'r', fee: 'PARTIAL', feeC: 'a', news: 'WATCH', newsC: 'a', risk: 'HIGH', riskC: 'r', state: 'BLOCKED · LIQ', stateC: 'r', reason: 'SIG ask side not visible' }),
+      R({ strat: 'COMPLETE-SET', event: 'Nevada House · NV-03', market: 'R #447 · D #448', dir: 'SELL_ALL · NO×2', gross: '1.21%', net: '0.74%', cap: '$504', qty: '510', liq: '0.7k / 0.5k', age: '3.3s', map: 'N/A · 1 VENUE', mapC: 'n', set: 'EXCLUSIVE ✓', setC: 'g', fee: 'KNOWN', feeC: 'g', news: 'CLEAR', newsC: 'g', risk: 'LOW', riskC: 'g', state: 'PAPER ELIGIBLE', stateC: 'a', reason: 'all research gates pass; live locked' }),
+      R({ strat: 'REL VALUE', event: 'North Carolina Governor', market: 'Democrat wins · SIG #452', k: true, noK: false, dir: 'BUY YES SIG / NO K', gross: '1.95%', net: '0.40%', cap: '$620', qty: '300', liq: '0.3k / 0.3k', age: '7.2s', ageStyle: red, map: 'REJECTED', mapC: 'r', set: 'DIFFERS', setC: 'r', fee: 'KNOWN', feeC: 'g', news: 'CLEAR', newsC: 'g', risk: 'HIGH', riskC: 'r', state: 'BLOCKED', stateC: 'r', reason: 'mapping rejected 09-29 by reviewer' }),
+    ];
+    // One gate list (GateId, 13), shared with the order ticket. Per-opportunity gates show opportunities passing.
+    const gates = [
+      { name: 'SIG authentication', v: 'PASS', c: 'g' },
+      { name: 'Payload vs real SIG API', v: 'UNVERIFIED', c: 'r' },
+      { name: 'Venue identifiers', v: 'PASS', c: 'g' },
+      { name: 'Fees known', v: '6 / 8 opps', c: 'a' },
+      { name: 'Mapping approved', v: '6 / 8 opps', c: 'a' },
+      { name: 'Settlement approved', v: '3 / 8 opps', c: 'a' },
+      { name: 'Quotes fresh', v: '6 / 8 opps', c: 'a' },
+      { name: 'Liquidity present', v: '7 / 8 opps', c: 'a' },
+      { name: 'No circuit breaker', v: '7 / 8 opps', c: 'a' },
+      { name: 'Risk limits pass', v: 'PASS', c: 'g' },
+      { name: 'Reconciliation clean', v: 'NOT RUN', c: 'r' },
+      { name: 'Kill switch off', v: 'ENGAGED', c: 'r' },
+      { name: 'Live mode selected', v: 'NO', c: 'r' },
+    ];
+    const ok = '', bad = 'color: #f08079;';
+    const feeds = [
+      { name: 'SIG books', src: '/api/markets/*/book', age: '0.9s', ageStyle: ok, v: 'FRESH', c: 'g' },
+      { name: 'SIG account', src: '/api/trading/*', age: '14s', ageStyle: ok, v: 'POLL 30s', c: 'n' },
+      { name: 'Kalshi books', src: 'public REST', age: '1.2s', ageStyle: ok, v: 'FRESH', c: 'g' },
+      { name: 'Polymarket books', src: 'CLOB public', age: '48.0s', ageStyle: bad, v: 'STALE', c: 'r' },
+      { name: 'News guard', src: 'news.py', age: '22s', ageStyle: ok, v: 'OK', c: 'g' },
+      { name: 'levels_daemon', src: 'writer pid 81423', age: '2.8s', ageStyle: ok, v: 'WRITING', c: 'g' },
+      { name: 'Universe digest', src: 'reviewed 09-29', age: '—', ageStyle: ok, v: 'BOUND', c: 'g' },
+    ];
+    const blocks = [
+      { t: '11:42:05', what: 'Michigan Sen · Polymarket quote 48s old', code: 'STALE_QUOTE' },
+      { t: '11:41:52', what: 'Georgia Sen · SIG ask depth not visible', code: 'NO_DEPTH' },
+      { t: '11:40:10', what: 'Ohio Sen · debate circuit breaker', code: 'NEWS_CB' },
+      { t: '11:38:44', what: 'Arizona Gov · BUY_ALL, race not exhaustive', code: 'NOT_EXHAUSTIVE' },
+      { t: '11:31:02', what: 'All · PLACE_PAYLOAD_CONFIRMED = False', code: 'PAYLOAD' },
+      { t: '11:30:00', what: 'All · global kill switch engaged', code: 'KILL_SWITCH' },
+      { t: '09:12:40', what: 'NC Gov · mapping rejected by reviewer', code: 'MAP_REJECTED' },
+    ];
+    return { rows, gates, feeds, blocks };
+  }
+}
+</script>
+</body>
+</html>

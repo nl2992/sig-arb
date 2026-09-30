@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Execution monitor</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0b0e12;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#d5dae1}
+a{color:#8fb3e0;text-decoration:none}a:hover{color:#c3d7f0}
+.m{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.mut{color:#8a94a3}
+.b{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:3px;font:600 10px/1 'IBM Plex Mono',monospace;letter-spacing:.03em;white-space:nowrap;border:1px solid;box-sizing:border-box}
+.g{color:#5fd39a;background:#0f2519;border-color:#1f5a3d}
+.a{color:#e7b75a;background:#261e10;border-color:#5c4420}
+.r{color:#f08079;background:#2a1313;border-color:#6b2a27}
+.n{color:#a3acb9;background:#151a21;border-color:#2b323d}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 10px;border-radius:4px;border:1px solid #2f3743;background:#161b22;color:#d5dae1;font:500 12px 'IBM Plex Sans',sans-serif;cursor:pointer;white-space:nowrap}
+.btn:hover{background:#1c222b}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.panel{background:#10141a;border:1px solid #232a34;border-radius:4px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;height:34px;padding:0 12px;border-bottom:1px solid #232a34;font:600 11px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9aa4b2}
+.lbl{font:600 10px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#8a94a3}
+table{border-collapse:collapse;width:100%}
+th{font:600 10px 'IBM Plex Sans',sans-serif;text-transform:uppercase;letter-spacing:.04em;color:#8a94a3;text-align:left;padding:6px 8px;border-bottom:1px solid #232a34;white-space:nowrap}
+td{padding:5px 8px;border-bottom:1px solid #1a2028;font-size:12px;white-space:nowrap}
+.num{text-align:right;font-family:'IBM Plex Mono',monospace}
+.kv{display:flex;justify-content:space-between;gap:8px;padding:6px 12px;border-bottom:1px solid #1a2028;font-size:12px}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1120px; box-sizing: border-box; background: #0b0e12; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <h1 style="margin: 0; font-size: 16px; font-weight: 600;">Execution</h1>
+  <span class="b a">MODE: RESEARCH</span><span class="b r">KILL SWITCH ENGAGED</span><span class="b n">0 LIVE ORDERS</span><span class="b a">MOCK DATA</span>
+  <div role="group" aria-label="Order scope" style="display: flex; border: 1px solid #2f3743; border-radius: 4px; overflow: hidden; margin-left: 8px;">
+    <button class="btn" style="border: none; border-radius: 0; background: #1c222b;">All</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; background: transparent;">Live</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; background: transparent;">Paper</button>
+    <button class="btn" style="border: none; border-radius: 0; border-left: 1px solid #2f3743; background: transparent;">Shadow</button>
+  </div>
+  <div style="flex-grow: 1;"></div>
+  <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h7M16 16l2 2 4-4"></path></svg>Reconcile</button>
+  <button class="btn" style="border-color: #6b2a27; color: #f5b1ac;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 6l12 12M18 6 6 18"></path></svg>Cancel all working (1)</button>
+  <button class="btn" style="height: 32px; background: #3a1414; border-color: #8a2f2a; color: #ffb3ad; font-weight: 600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v9M6.3 7a8 8 0 1 0 11.4 0"></path></svg>EMERGENCY STOP</button>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;">
+  <sc-for list="{{routes}}" as="rt" hint-placeholder-count="4">
+  <section class="panel">
+    <div class="ph"><span>{{rt.n}}</span><span class="b {{rt.c}}">{{rt.s}}</span></div>
+    <sc-for list="{{rt.kv}}" as="k" hint-placeholder-count="4"><div class="kv"><span class="mut">{{k.k}}</span><span class="m" style="{{k.st}}">{{k.v}}</span></div></sc-for>
+  </section>
+  </sc-for>
+</div>
+
+<div style="display: grid; grid-template-columns: 3fr 2fr; gap: 12px;">
+  <section class="panel">
+    <div class="ph"><span>Active tickets</span><span class="m mut" style="text-transform: none; letter-spacing: 0;">sorted by required action</span></div>
+    <table>
+      <thead><tr><th>Ticket</th><th>Mode</th><th>Event</th><th>Legs</th><th style="text-align: right;">Filled</th><th style="text-align: right;">Residual</th><th style="text-align: right;">Age</th><th>State</th><th>Next action</th></tr></thead>
+      <tbody><sc-for list="{{tickets}}" as="t" hint-placeholder-count="5">
+        <tr style="{{t.row}}"><td class="m">{{t.id}}</td><td><span class="b {{t.mc}}">{{t.mode}}</span></td><td>{{t.ev}}</td><td class="m">{{t.legs}}</td><td class="num">{{t.fill}}</td><td class="num" style="{{t.rs}}">{{t.res}}</td><td class="num">{{t.age}}</td><td><span class="b {{t.sc}}">{{t.st}}</span></td><td style="font-size: 11.5px;">{{t.next}}</td></tr>
+      </sc-for></tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Pending authorizations</span><span class="b a">2 WAITING</span></div>
+    <sc-for list="{{auths}}" as="x" hint-placeholder-count="2">
+      <div style="padding: 10px 12px; border-bottom: 1px solid #1a2028; display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;"><span class="m" style="font-size: 12.5px;">{{x.what}}</span><span class="b {{x.c}}">{{x.kind}}</span></div>
+        <div class="mut" style="font-size: 11.5px;">{{x.why}}</div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <button class="btn" style="background: #261e10; border-color: #5c4420; color: #f0cb85;">Review &amp; authorize</button>
+          <button class="btn">Decline</button>
+          <div style="flex-grow: 1;"></div>
+          <span class="m mut" style="font-size: 11px;">quote expires {{x.exp}}</span>
+        </div>
+      </div>
+    </sc-for>
+    <div class="mut" style="font-size: 11px; padding: 8px 12px;">Hedge, leg 2 and flatten orders are queued here. None is sent without an operator decision.</div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="ph"><span>Order blotter</span><span style="display: flex; gap: 6px; text-transform: none; letter-spacing: 0; font-weight: 500;"><span class="mut">show</span><button class="btn" style="height: 22px; font-size: 11px; background: #1c222b;">Working</button><button class="btn" style="height: 22px; font-size: 11px; background: transparent;">Done today</button><button class="btn" style="height: 22px; font-size: 11px; background: transparent;">Rejected</button></span></div>
+  <table>
+    <thead><tr><th>Client order id</th><th>Venue order id</th><th>Mode</th><th>Venue</th><th>Market</th><th>Side</th><th style="text-align: right;">Limit</th><th style="text-align: right;">Qty</th><th style="text-align: right;">Filled</th><th style="text-align: right;">Avg</th><th style="text-align: right;">Exp. VWAP</th><th style="text-align: right;">Slip</th><th style="text-align: right;">Ack</th><th style="text-align: right;">Age</th><th>State</th><th></th></tr></thead>
+    <tbody><sc-for list="{{orders}}" as="o" hint-placeholder-count="6">
+      <tr><td class="m">{{o.cid}}</td><td class="m mut">{{o.vid}}</td><td><span class="b {{o.mc}}">{{o.mode}}</span></td><td>{{o.v}}</td><td>{{o.mk}}</td><td class="m">{{o.side}}</td><td class="num">{{o.lim}}</td><td class="num">{{o.q}}</td><td class="num">{{o.f}}</td><td class="num">{{o.avg}}</td><td class="num mut">{{o.exp}}</td><td class="num" style="{{o.ss}}">{{o.slip}}</td><td class="num">{{o.ack}}</td><td class="num">{{o.age}}</td><td><span class="b {{o.sc}}">{{o.st}}</span></td>
+        <td><sc-if value="{{o.open}}" hint-placeholder-val="{{false}}"><button class="btn" style="height: 22px; font-size: 11px;" aria-label="Cancel order">Cancel</button></sc-if></td></tr>
+    </sc-for></tbody>
+  </table>
+</section>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; flex-grow: 1;">
+  <section class="panel">
+    <div class="ph"><span>Execution quality · 7d</span><span class="m mut" style="text-transform: none; letter-spacing: 0;">paper n=41 · shadow n=118</span></div>
+    <table>
+      <thead><tr><th>Metric</th><th style="text-align: right;">Paper</th><th style="text-align: right;">Shadow</th><th style="text-align: right;">Live</th></tr></thead>
+      <tbody><sc-for list="{{quality}}" as="q" hint-placeholder-count="7">
+        <tr><td>{{q.n}}</td><td class="num">{{q.p}}</td><td class="num">{{q.s}}</td><td class="num mut">{{q.l}}</td></tr>
+      </sc-for></tbody>
+    </table>
+    <div class="mut" style="font-size: 11px; padding: 8px 12px;">Live column stays empty until the first human-confirmed order. Nothing is extrapolated from paper.</div>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Send-time gate re-check</span><span class="b r">2 REFUSED TODAY</span></div>
+    <table>
+      <tbody><sc-for list="{{rechecks}}" as="c" hint-placeholder-count="5">
+        <tr><td class="m mut" style="font-size: 11px;">{{c.t}}</td><td class="m" style="font-size: 11px;">{{c.id}}</td><td style="font-size: 11.5px;">{{c.what}}</td><td style="text-align: right;"><span class="b {{c.c}}">{{c.r}}</span></td></tr>
+      </sc-for></tbody>
+    </table>
+    <div class="mut" style="font-size: 11px; padding: 8px 12px;">The server re-evaluates all 13 gates when an order is sent. If anything changed since review (gate hash), the send is refused and the ticket re-quotes.</div>
+  </section>
+  <section class="panel">
+    <div class="ph"><span>Event tape</span><span class="b g">STREAM OK · 1.0s</span></div>
+    <sc-for list="{{tape}}" as="e" hint-placeholder-count="9">
+      <div style="display: grid; grid-template-columns: 92px 80px 1fr; gap: 8px; padding: 4px 12px; border-bottom: 1px solid #1a2028; font-size: 11.5px;"><span class="m mut">{{e.t}}</span><span class="m" style="{{e.st}}">{{e.k}}</span><span>{{e.d}}</span></div>
+    </sc-for>
+  </section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1120}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const bad = 'color: #f08079;', amb = 'color: #e7b75a;';
+    const routes = [
+      { n: 'SIG order route', s: 'LOCKED', c: 'r', kv: [
+        { k: 'Endpoint', v: '/api/trading/orders/place', st: '' },
+        { k: 'Payload verified', v: 'NO', st: bad },
+        { k: 'Session', v: 'valid · 11:42:50', st: '' },
+        { k: 'Rate limit used', v: '0 / 10 per s', st: '' } ] },
+      { n: 'Paper engine', s: 'RUNNING', c: 'g', kv: [
+        { k: 'Book source', v: 'levels.sqlite3 replay', st: '' },
+        { k: 'Fill model', v: 'visible depth, no queue', st: '' },
+        { k: 'Latency model', v: '+250 ms', st: '' },
+        { k: 'Open paper orders', v: '1', st: '' } ] },
+      { n: 'Shadow recorder', s: 'RUNNING', c: 'g', kv: [
+        { k: 'Would-send payloads', v: '118 · 7d', st: '' },
+        { k: 'Tape comparison', v: 'every 60s', st: '' },
+        { k: 'Last record', v: '11:43:40', st: '' },
+        { k: 'Sends to venue', v: 'never', st: '' } ] },
+      { n: 'Kalshi · Polymarket', s: 'READ-ONLY', c: 'n', kv: [
+        { k: 'Order routes', v: 'not configured', st: amb },
+        { k: 'Kalshi books', v: 'fresh · 1.2s', st: '' },
+        { k: 'Polymarket books', v: 'stale · 48.0s', st: bad },
+        { k: 'Cross-venue legs', v: 'manual only', st: amb } ] },
+    ];
+    const tickets = [
+      { id: 'arb_5d0e', mode: 'PAPER', mc: 'a', ev: 'Nevada NV-03', legs: 'L1 ◐ L2 ○', fill: '320 / 510', res: '320 ct', rs: bad, age: '1m 42s', st: 'RESIDUAL', sc: 'r', next: 'Authorize leg 2 or flatten', row: 'box-shadow: inset 2px 0 0 #f08079;' },
+      { id: 'tkt_0931', mode: 'PAPER', mc: 'a', ev: 'Nevada NV-03', legs: 'L1 ○', fill: '0 / 510', res: '0', rs: '', age: '2m 40s', st: 'REVIEWED', sc: 'n', next: 'Quote expired, re-quote', row: '' },
+      { id: 'shd_2210', mode: 'SHADOW', mc: 'a', ev: 'Delaware Senate', legs: 'L1 ● L2 ● L3 ●', fill: 'would fill 1,000', res: '—', rs: '', age: '4m 05s', st: 'RECORDED', sc: 'n', next: 'None', row: '' },
+      { id: 'tkt_0918', mode: 'PAPER', mc: 'a', ev: 'Ohio Senate', legs: 'L1 ✕ L2 ✕', fill: '0 / 1,000', res: '0', rs: '', age: '12m', st: 'CANCELLED', sc: 'n', next: 'Reconciled', row: '' },
+      { id: 'dry_0934', mode: 'DRY-RUN', mc: 'n', ev: 'Pennsylvania Senate', legs: 'L1 · L2', fill: '—', res: '—', rs: '', age: '40s', st: 'VALIDATED', sc: 'n', next: 'Save for review', row: '' },
+    ];
+    const auths = [
+      { what: 'arb_5d0e L2 · BUY NO #448 × 320 @ ≤ 0.375', kind: 'LEG 2', c: 'a', why: 'Leg 1 filled 320 of 510. Break-even 0.3807. Visible depth ≤ 0.375: 450.', exp: 'in 3.1s' },
+      { what: 'arb_5d0e L1 · SELL NO #447 × 320 @ ≥ 0.612', kind: 'FLATTEN', c: 'r', why: 'Alternative to leg 2. Realizes −$2.32 at current bid. Mutually exclusive with the leg 2 authorization.', exp: 'in 3.1s' },
+    ];
+    const orders = [
+      { cid: 'arb_5d0e-L1', vid: 'paper-8812', mode: 'PAPER', mc: 'a', v: 'SIG', mk: 'NV-03 Rep. #447', side: 'BUY NO', lim: '0.620', q: '510', f: '320', avg: '0.6193', exp: '0.6190', slip: '+0.03¢', ss: '', ack: '228 ms', age: '1m 42s', st: 'PARTIAL', sc: 'a', open: true },
+      { cid: 'shd_2210-L1', vid: '—', mode: 'SHADOW', mc: 'a', v: 'SIG', mk: 'DE Sen Rep. #386', side: 'BUY NO', lim: '0.920', q: '1,000', f: '—', avg: '—', exp: '0.9200', slip: '—', ss: '', ack: '—', age: '4m 05s', st: 'RECORDED', sc: 'n', open: false },
+      { cid: 'shd_2210-L2', vid: '—', mode: 'SHADOW', mc: 'a', v: 'SIG', mk: 'DE Sen Dem. #353', side: 'BUY NO', lim: '0.050', q: '1,000', f: '—', avg: '—', exp: '0.0500', slip: '—', ss: '', ack: '—', age: '4m 05s', st: 'RECORDED', sc: 'n', open: false },
+      { cid: 'tkt_0918-L1', vid: 'paper-8790', mode: 'PAPER', mc: 'a', v: 'SIG', mk: 'OH Sen Rep. #421', side: 'BUY NO', lim: '0.505', q: '1,000', f: '0', avg: '—', exp: '0.5040', slip: '—', ss: '', ack: '231 ms', age: '12m', st: 'CANCELLED', sc: 'n', open: false },
+      { cid: 'tkt_0907-L1', vid: '—', mode: 'LIVE', mc: 'r', v: 'SIG', mk: 'NV-03 Rep. #447', side: 'BUY NO', lim: '0.622', q: '100', f: '0', avg: '—', exp: '0.6180', slip: '—', ss: '', ack: '—', age: '38m', st: 'REFUSED 423', sc: 'r', open: false },
+      { cid: '—', vid: 'sig-77120', mode: 'EXTERNAL', mc: 'r', v: 'SIG', mk: 'DE Sen Dem. #353', side: 'BUY NO', lim: '0.050', q: '40', f: '40', avg: '0.0500', exp: '—', slip: '—', ss: bad, ack: '—', age: '22m', st: 'UNMATCHED', sc: 'r', open: false },
+    ];
+    const quality = [
+      { n: 'Fill rate at limit', p: '71%', s: '64%', l: '—' },
+      { n: 'Median time to ack', p: '230 ms', s: '—', l: '—' },
+      { n: 'Median time to fill', p: '0.9 s', s: '1.4 s', l: '—' },
+      { n: 'Avg slippage vs expected', p: '+0.08¢', s: '+0.21¢', l: '—' },
+      { n: 'Partial-fill rate', p: '22%', s: '29%', l: '—' },
+      { n: 'Residual incidents', p: '3', s: '—', l: '—' },
+      { n: 'Realized vs expected edge', p: '84%', s: '—', l: '—' },
+    ];
+    const rechecks = [
+      { t: '11:43:14', id: 'arb_5d0e-L1', what: 'gate hash unchanged', r: 'SENT · PAPER', c: 'n' },
+      { t: '11:41:02', id: 'tkt_0929-L1', what: 'quote age 5.4s > 5.0s at send', r: '409 DRIFT', c: 'r' },
+      { t: '11:19:40', id: 'tkt_0918-L1', what: 'news breaker fired after review', r: '409 DRIFT', c: 'r' },
+      { t: '11:05:12', id: 'tkt_0907-L1', what: 'live requested; kill switch engaged', r: '423 LOCKED', c: 'r' },
+      { t: '10:58:30', id: 'shd_2201', what: 'gate hash unchanged', r: 'RECORDED', c: 'n' },
+    ];
+    const tape = [
+      { t: '11:44:12.410', k: 'AUTH_REQ', st: amb, d: 'arb_5d0e: leg 2 + flatten queued for operator' },
+      { t: '11:43:40.002', k: 'SHADOW', st: '', d: 'shd_2211 would-send payload recorded' },
+      { t: '11:43:15.010', k: 'RESIDUAL', st: bad, d: 'arb_5d0e: 320 ct unhedged > 50 max; halted' },
+      { t: '11:43:15.004', k: 'FILL', st: '', d: 'arb_5d0e-L1 200 @ 0.620 (paper)' },
+      { t: '11:43:14.910', k: 'FILL', st: '', d: 'arb_5d0e-L1 120 @ 0.618 (paper)' },
+      { t: '11:43:14.330', k: 'ACK', st: '', d: 'arb_5d0e-L1 paper-8812' },
+      { t: '11:43:14.102', k: 'SUBMIT', st: '', d: 'arb_5d0e-L1 BUY NO 510 @ 0.620 (paper)' },
+      { t: '11:43:10.500', k: 'REVIEW', st: '', d: 'arb_5d0e reviewed by operator' },
+      { t: '11:41:02.118', k: 'REFUSED', st: bad, d: 'tkt_0929-L1 409 gate drift (stale quote)' },
+    ];
+    return { routes, tickets, auths, orders, quality, rechecks, tape };
+  }
+}
+</script>
+</body>
+</html>
