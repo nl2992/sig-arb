@@ -17,9 +17,9 @@ SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --interval 60
 The dashboard shows SIG signals, venue coverage, mapped/approved counts,
 movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes
 the raw public inventory for inspection. Public venue depth is explicitly
-labelled in the response: Kalshi may provide top-of-book sizes, while
-Polymarket Gamma observations are indicative unless a CLOB book is present.
-No cross-venue row is execution-ready by default.
+labelled in the response: Kalshi provides top-of-book sizes, while the adapter
+fetches bounded Polymarket CLOB books and falls back to Gamma observations when
+a book is unavailable. No cross-venue row is execution-ready by default.
 
 ## During the operating window
 

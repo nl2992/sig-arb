@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from crossvenue_adapters import KalshiAdapter, PolymarketAdapter
-from crossvenue_models import MarketMatch, PriceObservation
+from crossvenue_models import MarketMatch, PriceObservation, normalize_ts
 from market_matches import approved_matches, load_registry
 from movement_scanner import scan_movements
 from relative_value import scan_pairs
@@ -51,6 +51,9 @@ class CrossVenueTests(unittest.TestCase):
         self.assertAlmostEqual(0.3, obs.reference_price())
         self.assertIsNone(PriceObservation("kalshi", "KX1", "YES", "2026-09-30T00:00:00+00:00", last=0.9, price_basis="unknown").reference_price())
 
+    def test_millisecond_timestamps_are_normalized(self):
+        self.assertEqual("2026-09-30T00:00:00+00:00", normalize_ts("1790726400000"))
+
     def test_future_review_timestamp_is_rejected(self):
         ts = dt.datetime(2026, 9, 30, 2, 0, tzinfo=dt.timezone.utc)
         snap = Snapshot(ts.isoformat(), [{"id": 386, "title": "Q"}], {386: [{"exchangeId": 1, "side": "SELL", "isYes": True, "price": 0.5, "quantity": 1}]})
@@ -72,6 +75,28 @@ class CrossVenueTests(unittest.TestCase):
         self.assertEqual(0.5, k.observations(1)[0].last)
         p = PolymarketAdapter(session=Fake([{"id": "P1", "question": "Q", "outcomes": '["Yes", "No"]', "outcomePrices": '["0.4", "0.6"]', "active": True, "closed": False}]))
         self.assertEqual(2, len(p.observations(1)))
+
+    def test_polymarket_clob_books_are_normalized(self):
+        class FakeCLOB:
+            def get(self, url, *args, **kwargs):
+                class R:
+                    def raise_for_status(self): pass
+                    def json(self):
+                        if '/book' in url:
+                            return {'timestamp': '1790726400000',
+                                    'bids': [{'price': '0.4', 'size': '12'}],
+                                    'asks': [{'price': '0.5', 'size': '8'}]}
+                        return [{'id': 'P1', 'question': 'Q', 'conditionId': 'C1',
+                                 'outcomes': '["Yes", "No"]',
+                                 'outcomePrices': '["0.4", "0.6"]',
+                                 'clobTokenIds': '["T1", "T2"]',
+                                 'active': True, 'closed': False}]
+                return R()
+        adapter = PolymarketAdapter(session=FakeCLOB(), clob_base_url='https://clob.test')
+        books = adapter.books(adapter.markets(1), 1)
+        self.assertEqual(2, len(books))
+        self.assertEqual(0.4, books[0]['best_bid'])
+        self.assertEqual(12.0, books[0]['best_bid_size'])
 
     def test_relative_value_is_review_gated_and_reports_z_score(self):
         rows = []

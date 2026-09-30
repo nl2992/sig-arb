@@ -94,12 +94,13 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     return {
         'market_counts': market_counts,
         'observation_counts': observation_counts,
+        'book_counts': {venue: len(data.get('books', [])) for venue, data in payload.items()},
         'mapping_counts': {'discovered': len(matches), 'approved': len(approved)},
         'movement': movement,
         'opportunities': enriched,
         'relative_value': relative,
         'history_points': len(history),
-        'depth_coverage': 'TOP_OF_BOOK_SIZES_ONLY',
+        'depth_coverage': 'TOP_OF_BOOK_SIZES_PLUS_BOUNDED_POLYMARKET_CLOB',
         'fees': {'sig': 'dashboard input', 'kalshi': 'unverified', 'polymarket': 'unverified'},
         'research_only': True,
     }

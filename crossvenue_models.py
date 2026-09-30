@@ -105,4 +105,13 @@ def parse_float(value: Any) -> Optional[float]:
 
 
 def normalize_ts(value: Any) -> Optional[str]:
+    if isinstance(value, str):
+        try:
+            numeric = float(value)
+        except ValueError:
+            numeric = None
+        if numeric is not None:
+            if numeric > 100_000_000_000:
+                numeric /= 1000
+            return dt.datetime.fromtimestamp(numeric, dt.timezone.utc).isoformat()
     return _iso(value)

@@ -211,4 +211,6 @@ The recurring workflow and staged execution gates are documented in
 [docs/systematic-execution-plan.md](docs/systematic-execution-plan.md).
 Dashboard opportunity rows carry explicit freshness, mapping, settlement, fee,
 liquidity, and execution-risk fields; `execution_ready` remains false until
-the relevant gates are independently verified.
+the relevant gates are independently verified. Public venue ingestion includes
+Kalshi top-of-book sizes and bounded Polymarket CLOB books, with a fallback to
+indicative Gamma prices.
