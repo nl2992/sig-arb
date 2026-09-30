@@ -27,7 +27,9 @@ movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes
 the raw public inventory for inspection. Public venue depth is explicitly
 labelled in the response: the adapter fetches books for all returned Kalshi and
 Polymarket markets by default and falls back to indicative observations when a
-book is unavailable. The dashboard uses native IDs from
+book is unavailable. Each venue also reports requested, returned, missing-market,
+and missing-book counts; a bounded or partial fetch cannot pass the complete
+coverage gate. The dashboard uses native IDs from
 `docs/market-links.csv`, so coverage is restricted to the fixed SIG research
 universe and labelled `TARGETED_SIG_UNIVERSE`. No cross-venue row is
 execution-ready by default.

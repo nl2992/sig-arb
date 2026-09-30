@@ -359,6 +359,11 @@ def fetch_public(venues: Iterable[str], limit: int = 1000, market_ids: dict | No
                    "ask_size": best.get((o.market_id, o.outcome_id.upper()), {}).get("best_ask_size", o.ask_size),
                    "source": "polymarket-clob" if (o.market_id, o.outcome_id.upper()) in best else o.source}
             ) for o in observation_rows]
+        returned_ids = {str(m.market_id) for m in market_rows}
+        requested_ids = {str(value) for value in ids} if ids is not None else returned_ids
+        book_ids = {str(book.get("market_id")) for book in books}
+        missing_book_ids = sorted(returned_ids - book_ids)
+        scope_complete = ids is not None or limit <= 0
         result[venue] = {
             "markets": [m.to_dict() for m in market_rows],
             "observations": [o.to_dict() for o in observation_rows],
@@ -366,5 +371,14 @@ def fetch_public(venues: Iterable[str], limit: int = 1000, market_ids: dict | No
             "book_coverage": "ALL_RETURNED_MARKETS" if venue == "kalshi" or depth_limit <= 0 else "BOUNDED_MARKET_COUNT",
             "inventory_coverage": "TARGETED_SIG_UNIVERSE" if ids is not None else
                                   "ALL_ACTIVE_INVENTORY" if limit <= 0 else "BOUNDED_MARKET_COUNT",
+            "coverage": {
+                "requested_market_count": len(requested_ids),
+                "returned_market_count": len(returned_ids),
+                "missing_market_ids": sorted(requested_ids - returned_ids),
+                "returned_book_market_count": len(book_ids),
+                "missing_book_market_ids": missing_book_ids,
+                "scope_complete": scope_complete,
+                "complete": scope_complete and not (requested_ids - returned_ids) and not missing_book_ids,
+            },
         }
     return result

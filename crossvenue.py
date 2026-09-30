@@ -80,13 +80,22 @@ def _live_once(args, cli, markets, matches, history, market_ids=None):
                           "reference_venue": match.reference_venue,
                           "reference_market_id": match.reference_market_id,
                           "reference_outcome_id": match.reference_outcome_id,
-                          "sig_price": sig_price, "reference_price": ref_price})
+                          "sig_price": sig_price, "reference_price": ref_price,
+                          "reference_observed_at": ref.observed_at if ref else None,
+                          "reference_source_ts": ref.source_ts if ref else None,
+                          "reference_price_basis": ref.price_basis if ref else None,
+                          "reference_bid": ref.bid if ref else None,
+                          "reference_ask": ref.ask if ref else None,
+                          "reference_source": ref.source if ref else None})
     _append_jsonl(args.history, pair_rows)
     history.extend(pair_rows)
     historical_observations = [PriceObservation(
         venue=row["reference_venue"], market_id=row["reference_market_id"],
         outcome_id=row["reference_outcome_id"], observed_at=row["observed_at"],
-        last=row["reference_price"], source="crossvenue-history", price_basis="last")
+        source_ts=row.get("reference_source_ts"), bid=row.get("reference_bid"),
+        ask=row.get("reference_ask"), last=row["reference_price"],
+        source=row.get("reference_source", "crossvenue-history"),
+        price_basis=row.get("reference_price_basis") or "last")
         for row in history if row.get("reference_price") is not None]
     movement = scan_movements(snap, historical_observations, matches,
                               min_move_pp=args.min_move_pp,

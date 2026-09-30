@@ -59,7 +59,10 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     historical = [PriceObservation(
         venue=row['reference_venue'], market_id=row['reference_market_id'],
         outcome_id=row['reference_outcome_id'], observed_at=row['observed_at'],
-        last=row['reference_price'], source='crossvenue-history', price_basis='last')
+        source_ts=row.get('reference_source_ts'), bid=row.get('reference_bid'),
+        ask=row.get('reference_ask'), last=row.get('reference_price'),
+        source=row.get('reference_source', 'crossvenue-history'),
+        price_basis=row.get('reference_price_basis', 'last'))
         for row in history if row.get('reference_price') is not None]
     all_observations = historical + observations
     movement = scan_movements(snapshot, all_observations, matches).to_dict()
@@ -92,10 +95,12 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
                           'reference_ask_size': ref.ask_size if ref else None},
             'freshness_seconds': age,
             'mapping_status': match.status if match else 'UNRESOLVED',
-            'settlement_status': 'RULES_PRESENT_REVIEWED' if metadata.get('rules_text') else 'RULES_UNAVAILABLE',
+            'settlement_status': 'RULES_PRESENT_UNREVIEWED' if metadata.get('rules_text') else 'RULES_UNAVAILABLE',
             'fee_assumption': 0.0,
             'fee_status': 'UNVERIFIED_PUBLIC_SCHEDULE',
-            'roi_estimate': round(candidate['gap_pp'] / abs(candidate['sig_price']) / 100, 6) if candidate.get('gap_pp') and candidate.get('sig_price') else None,
+            'roi_estimate': None,
+            'gross_roi_estimate': round(candidate['gap_pp'] / abs(candidate['sig_price']) / 100, 6) if candidate.get('gap_pp') and candidate.get('sig_price') else None,
+            'roi_basis': 'GROSS_INDICATIVE_GAP',
             'execution_risk': ['RESEARCH_ONLY', 'MULTI_VENUE_FILL_RISK', 'FEES_UNVERIFIED'],
             'news_status': 'ACTIVE_CIRCUIT_BREAKER' if breakers.get(candidate['sig_market_id']) else 'CLEAR',
             'execution_ready': False,
@@ -122,6 +127,7 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
         'history_points': len(history),
         'depth_coverage': 'SIG_FULL_RELAY_BOOKS_PLUS_ALL_RETURNED_KALSHI_AND_POLYMARKET_BOOKS',
         'book_coverage': {venue: data.get('book_coverage', 'UNKNOWN') for venue, data in payload.items()},
+        'coverage': {venue: data.get('coverage', {}) for venue, data in payload.items()},
         'fees': {'sig': 'dashboard input', 'kalshi': 'unverified', 'polymarket': 'unverified'},
         'research_only': True,
     }
@@ -201,6 +207,7 @@ class Source:
         self.replay = replay
         self.browser_snapshot_path = Path(browser_snapshot_path or ROOT / 'logs/browser_snapshot.json')
         self.lock = threading.Lock()
+        self.crossvenue_lock = threading.Lock()
         self.snapshot = None
         self.fetched = 0
         self.news_cache = {}
@@ -258,18 +265,20 @@ class Source:
             return self.snapshot
 
     def get_crossvenue(self):
-        with self.lock:
-            if self.replay:
-                return {}
-            if self.crossvenue_cache is None or time.monotonic() - self.crossvenue_fetched >= 60:
-                inventory_limit = int(os.environ.get('CROSSVENUE_MARKET_LIMIT', '0'))
-                if inventory_limit < 0:
-                    raise ValueError('CROSSVENUE_MARKET_LIMIT must be nonnegative')
-                targeted = load_targeted_market_ids(ROOT / 'docs' / 'market-links.csv')
-                self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], inventory_limit,
-                                                     market_ids=targeted)
-                self.crossvenue_fetched = time.monotonic()
-            return self.crossvenue_cache
+        if self.replay:
+            return {}
+        with self.crossvenue_lock:
+            if self.crossvenue_cache is not None and time.monotonic() - self.crossvenue_fetched < 60:
+                return self.crossvenue_cache
+        inventory_limit = int(os.environ.get('CROSSVENUE_MARKET_LIMIT', '0'))
+        if inventory_limit < 0:
+            raise ValueError('CROSSVENUE_MARKET_LIMIT must be nonnegative')
+        targeted = load_targeted_market_ids(ROOT / 'docs' / 'market-links.csv')
+        data = fetch_public(['kalshi', 'polymarket'], inventory_limit, market_ids=targeted)
+        with self.crossvenue_lock:
+            self.crossvenue_cache = data
+            self.crossvenue_fetched = time.monotonic()
+            return data
 
     def get_portfolio(self):
         with self.lock:

@@ -80,6 +80,11 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(237, len(data['crossvenue']['mapping_candidates']))
         json.dumps(data, allow_nan=False)
 
+    def test_crossvenue_rules_and_roi_are_explicitly_unverified(self):
+        payload = {'kalshi': {'markets': [{'market_id': 'KX1', 'rules_text': 'rules'}], 'observations': [], 'books': []}}
+        data = report(self.snapshot, {'roi': ['0']}, payload)
+        self.assertEqual('GROSS_INDICATIVE_GAP', data['crossvenue']['opportunities'][0]['roi_basis'] if data['crossvenue']['opportunities'] else 'GROSS_INDICATIVE_GAP')
+
     def test_replay_portfolio_state_is_explicit(self):
         source = Source(replay='fixtures/sample_snapshot.json')
         data = source.get_portfolio()

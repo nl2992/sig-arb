@@ -233,6 +233,11 @@ the relevant gates are independently verified. Public venue ingestion includes
 all returned Kalshi and Polymarket order books by default, with a fallback to
 indicative Gamma prices. Kalshi books use the public YES/NO bid ladders and
 derive complementary asks; Polymarket books use the public CLOB token books.
+The public payload includes requested/returned/missing market and book counts;
+partial or bounded coverage is never treated as complete readiness. Historical
+cross-venue observations retain their original source timestamp, price basis,
+and venue source. Rules text is evidence for review, not settlement approval,
+and net ROI stays unknown while venue fees are unverified.
 Set `POLYMARKET_DEPTH_LIMIT` to a positive market count only when an explicitly
 bounded research run is needed; the payload labels that coverage as bounded.
 The dashboard requests the native Kalshi and Polymarket IDs in

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from crossvenue_adapters import KalshiAdapter, PolymarketAdapter
-from crossvenue_models import MarketMatch, PriceObservation, normalize_ts
+from crossvenue_models import MarketMatch, MarketMetadata, PriceObservation, normalize_ts
 from market_matches import approved_matches, load_registry
 from movement_scanner import scan_movements
 from relative_value import scan_pairs
@@ -50,6 +50,26 @@ class CrossVenueTests(unittest.TestCase):
         obs = PriceObservation("kalshi", "KX1", "YES", "2026-09-30T00:00:00+00:00", bid=0.2, ask=0.4, last=0.9, price_basis="mid")
         self.assertAlmostEqual(0.3, obs.reference_price())
         self.assertIsNone(PriceObservation("kalshi", "KX1", "YES", "2026-09-30T00:00:00+00:00", last=0.9, price_basis="unknown").reference_price())
+
+    def test_coverage_reports_missing_targeted_markets_and_books(self):
+        from unittest.mock import patch
+        with patch('crossvenue_adapters.KalshiAdapter.markets_by_ids', return_value=[]), \
+             patch('crossvenue_adapters.PolymarketAdapter.markets_by_ids', return_value=[]):
+            from crossvenue_adapters import fetch_public
+            result = fetch_public(['kalshi', 'polymarket'], market_ids={'kalshi': ['KX1'], 'polymarket': ['P1']})
+        self.assertFalse(result['kalshi']['coverage']['complete'])
+        self.assertEqual(['KX1'], result['kalshi']['coverage']['missing_market_ids'])
+
+    def test_bounded_inventory_is_not_complete_coverage(self):
+        from unittest.mock import patch
+        market = MarketMetadata('kalshi', 'KX1', 'E1', 'Q', [])
+        with patch('crossvenue_adapters.KalshiAdapter.markets', return_value=[market]), \
+             patch('crossvenue_adapters.KalshiAdapter.observations', return_value=[]), \
+             patch('crossvenue_adapters.KalshiAdapter.books', return_value=[{'market_id': 'KX1', 'outcome_id': 'YES'}]):
+            from crossvenue_adapters import fetch_public
+            result = fetch_public(['kalshi'], limit=1)
+        self.assertFalse(result['kalshi']['coverage']['complete'])
+        self.assertFalse(result['kalshi']['coverage']['scope_complete'])
 
     def test_millisecond_timestamps_are_normalized(self):
         self.assertEqual("2026-09-30T00:00:00+00:00", normalize_ts("1790726400000"))

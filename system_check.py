@@ -59,7 +59,8 @@ def readiness(*, snapshot_path=None, public=False, public_limit=0,
                                         "market_counts": {v: len(p["markets"]) for v, p in venues.items()},
                                         "inventory_coverage": {v: p["inventory_coverage"] for v, p in venues.items()},
                                         "book_coverage": {v: p["book_coverage"] for v, p in venues.items()},
-                                        "complete": all(p["inventory_coverage"] in {"ALL_ACTIVE_INVENTORY", "TARGETED_SIG_UNIVERSE"}
+                                        "coverage": {v: p.get("coverage", {}) for v, p in venues.items()},
+                                        "complete": all(p.get("coverage", {}).get("complete", False)
                                                         for p in venues.values())}
         except Exception as exc:
             checks["public_venues"] = {"status": "FAIL", "error": str(exc)}
