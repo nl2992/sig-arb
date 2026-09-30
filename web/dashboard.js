@@ -34,3 +34,17 @@ window.addEventListener('resize',()=>{const r=data?.signals.find(r=>r.race+r.dir
 setInterval(()=>{if($('auto').checked&&!document.hidden)refresh();},30000);setInterval(()=>{if(!busy)freshness();},5000);refresh();
 $('kellyForm').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;const q=new URLSearchParams({market:$('market').value,no:$('position').value,probability:Number($('probability').value)/100,bankroll:$('bankroll').value,fraction:$('fraction').value,fee:params.get('fee')});$('kellyResult').textContent='Calculating…';try{const response=await fetch('/api/kelly?'+q,{signal:AbortSignal.timeout(120000)});const r=await response.json();if(!response.ok)throw Error(r.error);$('kellyResult').textContent=`${fmt(r.qty,0)} shares · ${fmt(r.capital)} capital (${fmt(r.bankroll_fraction*100)}% of bankroll) · ${r.vwap===null?'No positive edge':fmt(r.vwap,4)+' VWAP'} · ${fmt(r.expected_profit)} expected profit · ${fmt(r.growth*100,4)}% expected log growth · snapshot ${new Date(r.ts).toLocaleTimeString()}`;}catch(e){$('kellyResult').textContent=e.message;}finally{button.disabled=false;}};
 ['market','position','probability','bankroll','fraction'].forEach(id=>$(id).addEventListener('change',()=>{$('kellyResult').textContent='Inputs changed. Awaiting calculation.'}));
+let newsRequest=0;
+$('market').addEventListener('change',()=>{newsRequest++;$('news').textContent='Market changed. Load related news.';});
+$('loadNews').onclick=async()=>{
+ const request=++newsRequest, market=$('market').value;
+ if(!market)return;
+ $('news').textContent='Loading source context…';
+ try{
+  const response=await fetch('/api/news?market='+encodeURIComponent(market));
+  const n=await response.json();if(!response.ok)throw Error(n.error);
+  if(request!==newsRequest)return;
+  const safe=url=>{try{const u=new URL(url);return ['http:','https:'].includes(u.protocol)?u.href:null}catch{return null}};
+  $('news').innerHTML=`<p><strong>${esc(n.tradingStatus)}</strong>${n.tradingStart?' · Opens '+esc(new Date(n.tradingStart).toLocaleString()):''}</p><p>${esc(n.contextSummary||'No context summary available.')}</p><p class="model-note">Platform summaries and probability claims are unverified. Feed refresh: ${esc(n.lastRefresh||'Unknown')}. First seen is our collection time, not publication time.</p>`+n.headlines.map(a=>`<article class="news-item"><h3>${safe(a.url)?`<a href="${esc(safe(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a>`:esc(a.title)}</h3><small>${esc(a.source)} · Published ${esc(a.publishedDate||'Unknown')} · First seen ${esc(new Date(a.firstSeen).toLocaleString())}</small><p>${esc(a.summary||'')}</p></article>`).join('')+(n.headlines.length?'':'<p>No related news available.</p>');
+ }catch(e){if(request===newsRequest)$('news').textContent='News unavailable: '+e.message;}
+};

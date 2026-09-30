@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from arb_engine import group_markets, scan
 from sig_client import Client
 from kelly import size_position
+from news import fetch_news
 from signals import Snapshot, load_exhaustive
 
 ROOT = Path(__file__).parent
@@ -73,6 +74,18 @@ class Source:
         self.lock = threading.Lock()
         self.snapshot = None
         self.fetched = 0
+        self.news_cache = {}
+
+    def news(self, market_id):
+        with self.lock:
+            if self.replay:
+                return dict(headlines=[], tradingStatus='Replay', contextSummary='News unavailable in replay mode.')
+            cached = self.news_cache.get(market_id)
+            if cached and time.monotonic()-cached[0] < 300:
+                return cached[1]
+            data = fetch_news(Client(), market_id)
+            self.news_cache[market_id] = (time.monotonic(), data)
+            return data
 
     def get(self):
         with self.lock:
@@ -91,7 +104,7 @@ def handler(source):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             url = urlparse(self.path)
-            if url.path in ("/api/signals", "/api/kelly"):
+            if url.path in ("/api/signals", "/api/kelly", "/api/news"):
                 try:
                     params = parse_qs(url.query)
                     # Validate inputs before making external requests.
@@ -99,6 +112,12 @@ def handler(source):
                         value = float(values[0])
                         if not math.isfinite(value) or value < 0:
                             raise ValueError("Invalid filter")
+                    if url.path == '/api/news':
+                        mid = int(params['market'][0])
+                        if mid <= 0:
+                            raise ValueError('Invalid market')
+                        self.send_body(200, json.dumps(source.news(mid)).encode(), 'application/json')
+                        return
                     snapshot = source.get()
                     if url.path == '/api/kelly':
                         mid = int(params['market'][0])

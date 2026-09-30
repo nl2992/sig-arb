@@ -115,7 +115,14 @@ It does not account for existing positions or correlations, so independent
 results must not be summed into a portfolio allocation. A price is not an
 independent probability forecast. No bankroll or probability is prefilled.
 
-News integration is not connected yet. A useful event record needs a source URL,
+Related News is available through the dashboard's selected-market news panel.
+It reads the platform's public `/api/markets/[id]/news?marketId=...` endpoint,
+caches reads for five minutes, and archives distinct article versions with
+first-seen timestamps in ignored `logs/news.sqlite3`. Summaries and probability
+claims remain unverified; they never automatically populate Kelly probabilities.
+The panel also reports the tournament's scheduled trading window from page data.
+The scanner's quotes are indicative and do not establish permission to trade.
+A useful event record needs a source URL,
 publication and first-seen timestamps, affected race, deduplicated event ID,
 prior/posterior probability and rationale. Evaluate forecasts with calibration
 and Brier/log scores on later outcomes; evaluate trade signals against executable
