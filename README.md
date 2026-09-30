@@ -245,7 +245,8 @@ kill switch at `logs/KILL_SWITCH`.
 
 Run `PYTHONPATH=. python3 system_check.py` before a session for a read-only
 readiness report. Paper readiness stays false until a fresh SIG snapshot and a
-public venue coverage check have both passed; use `--sig-snapshot
-logs/browser_snapshot.json --public` for that check. The report always keeps
+complete public venue coverage check have both passed; use `--sig-snapshot
+logs/browser_snapshot.json --public` for that check. A bounded public run is
+reported but is not complete readiness. The report always keeps
 `ready_for_live` false until the separate execution gates are explicitly
 verified.

@@ -56,7 +56,9 @@ def readiness(*, snapshot_path=None, public=False, public_limit=0,
             checks["public_venues"] = {"status": "PASS",
                                         "market_counts": {v: len(p["markets"]) for v, p in venues.items()},
                                         "inventory_coverage": {v: p["inventory_coverage"] for v, p in venues.items()},
-                                        "book_coverage": {v: p["book_coverage"] for v, p in venues.items()}}
+                                        "book_coverage": {v: p["book_coverage"] for v, p in venues.items()},
+                                        "complete": all(p["inventory_coverage"] == "ALL_ACTIVE_INVENTORY"
+                                                        for p in venues.values())}
         except Exception as exc:
             checks["public_venues"] = {"status": "FAIL", "error": str(exc)}
     else:
@@ -69,8 +71,8 @@ def readiness(*, snapshot_path=None, public=False, public_limit=0,
     checks["execution_gate"] = {"status": "BLOCKED", "reason": "Production execution remains disabled by policy."}
     return {"checks": checks,
             "ready_for_paper": all(checks[name]["status"] == "PASS" for name in
-                                    ("mapping_registry", "news_ledger", "sig_snapshot",
-                                     "public_venues", "paper_shadow")),
+                                    ("mapping_registry", "news_ledger", "sig_snapshot", "paper_shadow"))
+            and checks["public_venues"].get("complete", False),
             "ready_for_live": False, "research_only": True}
 
 

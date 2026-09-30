@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from system_check import readiness
@@ -20,6 +21,16 @@ class SystemCheckTests(unittest.TestCase):
             result = readiness(news_path=path)
         self.assertFalse(result["ready_for_paper"])
         self.assertEqual("FAIL", result["checks"]["news_ledger"]["status"])
+
+    def test_bounded_public_inventory_is_not_complete(self):
+        payload = {
+            "kalshi": {"markets": [{}], "inventory_coverage": "BOUNDED_MARKET_COUNT", "book_coverage": "ALL_RETURNED_MARKETS"},
+            "polymarket": {"markets": [{}], "inventory_coverage": "BOUNDED_MARKET_COUNT", "book_coverage": "ALL_RETURNED_MARKETS"},
+        }
+        with patch("system_check.fetch_public", return_value=payload):
+            result = readiness(public=True, public_limit=2)
+        self.assertFalse(result["checks"]["public_venues"]["complete"])
+        self.assertFalse(result["ready_for_paper"])
 
 
 if __name__ == "__main__":
