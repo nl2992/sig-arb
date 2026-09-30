@@ -1,0 +1,146 @@
+"""Read-only local dashboard. Run: python3 dashboard.py --port 8765."""
+import argparse
+import json
+import math
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from arb_engine import group_markets, scan
+from sig_client import Client
+from kelly import size_position
+from signals import Snapshot, load_exhaustive
+
+ROOT = Path(__file__).parent
+
+
+def report(snapshot, params):
+    def number(name, default):
+        value = float(params.get(name, [default])[0])
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(name + " must be a finite nonnegative number")
+        return value
+
+    fee = number("fee", 0)
+    budget = number("budget", 0)
+    edge = number("edge", 0)
+    minimum = number("profit", 1)
+    books = snapshot.books()
+    groups = group_markets(snapshot.markets)
+    exhaustive = load_exhaustive()
+    results = scan(groups, books, exhaustive, fee_per_share=fee,
+                   min_edge=edge, cash=budget or None)
+    titles = {m["id"]: m["title"] for m in snapshot.markets}
+    rows = []
+    for r in results:
+        if r.pnl < minimum:
+            continue
+        no = r.direction == "SELL_ALL"
+        rows.append(dict(
+            race=r.race, direction=r.direction, qty=r.qty, profit=r.pnl,
+            capital=r.capital, roi=r.roi, edge=r.avg_edge,
+            top_edge=r.top_edge, marginal_edge=r.marginal_edge,
+            vwap=sum(1-l.vwap if no else l.vwap for l in r.legs),
+            steps=r.steps,
+            legs=[dict(id=l.market_id, title=titles[l.market_id],
+                       side="BUY NO" if no else "BUY YES", qty=l.qty,
+                       vwap=1-l.vwap if no else l.vwap,
+                       limit=1-l.limit if no else l.limit) for l in r.legs]))
+    near = []
+    for race, legs in groups.items():
+        if len(legs) < 2 or any(mid not in books for mid in legs.values()):
+            continue
+        for direction in (["SELL_ALL", "BUY_ALL"] if race in exhaustive else ["SELL_ALL"]):
+            prices = [(books[mid].best_bid() if direction == "SELL_ALL"
+                       else books[mid].best_ask()) for mid in legs.values()]
+            if any(price is None for price in prices):
+                continue
+            edge = (sum(prices)-1 if direction == "SELL_ALL" else 1-sum(prices))-len(prices)*fee
+            if edge <= 0:
+                near.append(dict(race=race, dir=direction, edge=edge))
+    near.sort(key=lambda r: -r["edge"])
+    return dict(ts=snapshot.ts, markets=len(snapshot.markets), races=len(groups),
+                exhaustive=len(exhaustive), fee=fee, budget=budget,
+                signals=rows, near=near[:12],
+                markets_list=[dict(id=m['id'], title=m['title']) for m in snapshot.markets])
+
+
+class Source:
+    def __init__(self, replay=None):
+        self.replay = replay
+        self.lock = threading.Lock()
+        self.snapshot = None
+        self.fetched = 0
+
+    def get(self):
+        with self.lock:
+            if self.snapshot is None or time.monotonic()-self.fetched >= 15:
+                if self.replay:
+                    snapshot = Snapshot.load(self.replay)
+                else:
+                    client = Client()
+                    snapshot = Snapshot.fetch(client, client.markets())
+                self.snapshot = snapshot
+                self.fetched = time.monotonic()
+            return self.snapshot
+
+
+def handler(source):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            url = urlparse(self.path)
+            if url.path in ("/api/signals", "/api/kelly"):
+                try:
+                    params = parse_qs(url.query)
+                    # Validate inputs before making external requests.
+                    for values in params.values():
+                        value = float(values[0])
+                        if not math.isfinite(value) or value < 0:
+                            raise ValueError("Invalid filter")
+                    snapshot = source.get()
+                    if url.path == '/api/kelly':
+                        mid = int(params['market'][0])
+                        book = snapshot.books()[mid]
+                        no = params.get('no', ['0'])[0] == '1'
+                        ladder = [(1-p, q) for p, q in book.bids] if no else book.asks
+                        data = size_position(ladder, float(params['probability'][0]),
+                                             float(params['bankroll'][0]),
+                                             float(params.get('fraction', ['0.25'])[0]),
+                                             float(params.get('fee', ['0'])[0]))
+                        data['ts'] = snapshot.ts
+                    else:
+                        data = report(snapshot, params)
+                    data["mode"] = "replay" if source.replay else "live"
+                    self.send_body(200, json.dumps(data, allow_nan=False).encode(), "application/json")
+                except ValueError as exc:
+                    self.send_body(400, json.dumps({"error": str(exc)}).encode(), "application/json")
+                except Exception:
+                    self.send_body(502, b'{"error":"Market data unavailable. Retry the scan."}', "application/json")
+            elif url.path in ("/", "/dashboard.css", "/dashboard.js"):
+                file = "dashboard.html" if url.path == "/" else url.path[1:]
+                mime = {"html": "text/html", "css": "text/css", "js": "application/javascript"}
+                self.send_body(200, (ROOT / "web" / file).read_bytes(), mime[file.split(".")[-1]])
+            else:
+                self.send_body(404, b"Not found", "text/plain")
+
+        def send_body(self, code, body, mime):
+            self.send_response(code)
+            self.send_header("Content-Type", mime + "; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+    return Handler
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--replay")
+    args = parser.parse_args()
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(Source(args.replay)))
+    print(f"Dashboard: http://127.0.0.1:{args.port}", flush=True)
+    server.serve_forever()

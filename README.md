@@ -86,3 +86,42 @@ Risk checks run before every trade: marginal edge floor (stricter for 3-leg race
 - **401/403 on reads:** your cookie has expired or wasn't copied in full. Copy it again. If Python is still blocked (bot protection), use `scan_console.js` in the browser.
 - **"Tournament has not started yet":** `quote` and `place` only work from 1 Oct 12:00 ET. Reading books works now.
 - **Slow scans:** 237 books take about 2 s with 8 threads. Don't go below about a 3 s interval, and don't raise concurrency much. Being polite with request volume keeps your account safe.
+## Local Dashboard
+
+Run `python3 dashboard.py --port 8876` and open http://127.0.0.1:8876.
+The read-only dashboard refreshes every 30 seconds and ranks opportunities by
+estimated total profit, VWAP edge, ROI, or executable quantity. Expand a race
+for per-leg VWAP, worst execution price, market links, and cumulative profit
+across order-book depth. Capital caps apply independently to each race, not to
+the portfolio. Blank or zero capital cap means uncapped.
+
+Bundle VWAP is the sum of the prices paid for one share on every leg; BUY NO
+prices are converted from YES bids. VWAP excludes fees; profit, edge, ROI and
+capital include the configured per-share, per-leg fee. Fees default to zero.
+Estimates require all legs to fill; order books are fetched sequentially in
+batches and are not an atomic exchange snapshot. BUY YES opportunities require
+an explicit race entry in `exhaustive.txt`. This dashboard cannot place orders.
+
+Offline preview: `python3 dashboard.py --port 8877 --replay fixtures/sample_snapshot.json`.
+Dashboard checks: `python3 -m unittest test_dashboard`.
+
+### Kelly and News
+
+The probability-value calculator sizes one binary position using an explicit
+probability that the selected YES or NO position pays out. It maximizes expected
+log terminal wealth against available depth, fees, and whole-share granularity.
+Fractional Kelly uses the selected fraction of bankroll as the risk bankroll.
+It does not account for existing positions or correlations, so independent
+results must not be summed into a portfolio allocation. A price is not an
+independent probability forecast. No bankroll or probability is prefilled.
+
+News integration is not connected yet. A useful event record needs a source URL,
+publication and first-seen timestamps, affected race, deduplicated event ID,
+prior/posterior probability and rationale. Evaluate forecasts with calibration
+and Brier/log scores on later outcomes; evaluate trade signals against executable
+prices after first-seen time, including fees and failed fills. Never backfill a
+historical signal using an article's later revised contents. Track signal
+persistence separately from probability: surviving scans do not prove fair value.
+
+Kelly reference: https://theory.stanford.edu/~blynn/pr/kelly.html
+Run sizing checks with `python3 -m unittest test_kelly`.

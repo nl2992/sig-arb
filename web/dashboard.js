@@ -1,0 +1,36 @@
+const $=id=>document.getElementById(id);
+const fmt=(n,d=2)=>Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let data=null, selected=null, busy=false, failed=false;
+let params=new URLSearchParams({fee:'0',edge:'0',profit:'1',budget:'0'});
+function filtered(){return (data?.signals||[]).filter(r=>r.race.toLowerCase().includes($('search').value.toLowerCase())).sort((a,b)=>b[$('sort').value]-a[$('sort').value]);}
+function render(){
+ if(!data)return;
+ const chosen=$('market').value;
+ $('market').innerHTML=data.markets_list.map(m=>`<option value="${m.id}">${esc(m.title)}</option>`).join('');
+ if(chosen)$('market').value=chosen;
+ $('count').textContent=data.signals.length;
+ $('best').textContent=fmt(Math.max(0,...data.signals.map(r=>r.profit)));
+ $('edgeStat').textContent=fmt(Math.max(0,...data.signals.map(r=>r.edge))*100,2)+'¢';
+ $('coverage').textContent=data.markets;
+ $('races').textContent=data.races+' races';
+ $('time').textContent='Snapshot '+new Date(data.ts).toLocaleTimeString();
+ $('scope').textContent=`${data.exhaustive} exhaustive races · ${data.exhaustive?'YES + NO positions':'NO positions only'} · ${data.budget?'Cap '+fmt(data.budget,0)+'/race':'Capital uncapped'}`;
+ const rows=filtered();
+ $('rows').innerHTML=rows.length?rows.map((r,i)=>`<tr class="${selected===r.race+r.direction?'selected':''}"><td><strong>${esc(r.race)}</strong><small>${r.direction==='SELL_ALL'?'Buy NO across all legs':'Buy YES across all legs'}</small></td><td class="positive">+${fmt(r.profit)}</td><td>${fmt(r.vwap,4)}</td><td class="positive">${fmt(r.edge*100)}¢</td><td>${fmt(r.roi*100)}%</td><td>${fmt(r.qty,0)}</td><td>${fmt(r.capital)}</td><td><button data-row="${i}" aria-label="Inspect ${esc(r.race)}">Details</button></td></tr>`).join(''):'<tr><td colspan="8" class="empty">No executable opportunities match these filters.</td></tr>';
+ document.querySelectorAll('[data-row]').forEach(b=>b.onclick=()=>{selected=rows[+b.dataset.row].race+rows[+b.dataset.row].direction;render();});
+ $('near').innerHTML=data.near.map(r=>`<div class="near-item"><span>${esc(r.race)}</span><span>${fmt(r.edge*100)}¢</span></div>`).join('')||'<p>No near misses available.</p>';
+ const r=rows.find(r=>r.race+r.direction===selected);
+ $('detail').hidden=!r;
+ if(r){$('detail').innerHTML=`<div class="section-title"><h2>${esc(r.race)} / execution depth</h2><span>Marginal edge ${fmt(r.marginal_edge*100)}¢</span></div><div class="detail-grid"><div class="table-wrap"><table><thead><tr><th>Market</th><th>Position</th><th>VWAP</th><th>Limit</th><th>Qty</th></tr></thead><tbody>${r.legs.map(l=>`<tr><td><a href="https://sig.thesuper.market/markets/${l.id}" target="_blank" rel="noopener noreferrer">${esc(l.title.match(/the (\w+) Party/)?.[1]||l.id)} ↗</a></td><td>${l.side}</td><td>${fmt(l.vwap,4)}</td><td>${fmt(l.limit,4)}</td><td>${fmt(l.qty,0)}</td></tr>`).join('')}</tbody></table></div><div class="chart-box"><div class="chart-label"><span>Cumulative estimated profit</span><span>+${fmt(r.profit)} SUSQies</span></div><canvas id="chart" role="img" aria-label="Cumulative estimated profit rises to ${fmt(r.profit)} over ${r.qty} bundles"></canvas><div class="chart-label"><span>0 bundles</span><span>${fmt(r.qty,0)} bundles</span></div></div></div>`;draw(r);}
+ freshness();
+}
+function draw(r){const c=$('chart');if(!c)return;const rect=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;c.width=rect.width*dpr;c.height=175*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);const w=rect.width,h=175;x.strokeStyle='#e0e7e2';for(let i=0;i<4;i++){x.beginPath();x.moveTo(0,i*50+15);x.lineTo(w,i*50+15);x.stroke();}const pts=[{cum_qty:0,cum_pnl:0},...r.steps];x.beginPath();pts.forEach((p,i)=>{const a=8+p.cum_qty/r.qty*(w-16),b=h-10-p.cum_pnl/r.profit*(h-25);i?x.lineTo(a,b):x.moveTo(a,b)});x.strokeStyle='#159563';x.lineWidth=2.5;x.stroke();x.lineTo(w-8,h-10);x.lineTo(8,h-10);x.closePath();x.fillStyle='rgba(21,149,99,.08)';x.fill();}
+function freshness(){if(!data)return;const age=(Date.now()-Date.parse(data.ts))/1000;$('status').textContent=failed?'Scan failed · stale':data.mode==='replay'?'Replay data':age>60?'Stale snapshot':'Live · read only';$('status').style.color=failed||age>60?'#a2612e':'#19744b';}
+async function refresh(){if(busy)return;busy=true;$('refresh').disabled=true;$('status').textContent='Scanning…';try{const response=await fetch('/api/signals?'+params,{signal:AbortSignal.timeout(120000)});const result=await response.json();if(!response.ok)throw Error(result.error||'Scan failed');data=result;failed=false;$('error').hidden=true;if(selected===null&&data.signals.length)selected=data.signals[0].race+data.signals[0].direction;render();}catch(e){failed=true;$('error').textContent=e.message+' Last successful results, if present, are retained.';$('error').hidden=false;$('status').textContent='Scan failed';freshness();}finally{busy=false;$('refresh').disabled=false;}}
+$('filters').onsubmit=e=>{e.preventDefault();if(busy)return;params=new URLSearchParams(Object.fromEntries(['fee','budget','edge','profit'].map(k=>[k,$(k).value||'0'])));refresh();};
+$('refresh').onclick=refresh;$('search').oninput=render;$('sort').onchange=render;
+window.addEventListener('resize',()=>{const r=data?.signals.find(r=>r.race+r.direction===selected);if(r)draw(r)});
+setInterval(()=>{if($('auto').checked&&!document.hidden)refresh();},30000);setInterval(()=>{if(!busy)freshness();},5000);refresh();
+$('kellyForm').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;const q=new URLSearchParams({market:$('market').value,no:$('position').value,probability:Number($('probability').value)/100,bankroll:$('bankroll').value,fraction:$('fraction').value,fee:params.get('fee')});$('kellyResult').textContent='Calculating…';try{const response=await fetch('/api/kelly?'+q,{signal:AbortSignal.timeout(120000)});const r=await response.json();if(!response.ok)throw Error(r.error);$('kellyResult').textContent=`${fmt(r.qty,0)} shares · ${fmt(r.capital)} capital (${fmt(r.bankroll_fraction*100)}% of bankroll) · ${r.vwap===null?'No positive edge':fmt(r.vwap,4)+' VWAP'} · ${fmt(r.expected_profit)} expected profit · ${fmt(r.growth*100,4)}% expected log growth · snapshot ${new Date(r.ts).toLocaleTimeString()}`;}catch(e){$('kellyResult').textContent=e.message;}finally{button.disabled=false;}};
+['market','position','probability','bankroll','fraction'].forEach(id=>$(id).addEventListener('change',()=>{$('kellyResult').textContent='Inputs changed. Awaiting calculation.'}));
