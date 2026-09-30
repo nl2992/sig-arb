@@ -17,6 +17,15 @@ POLYMARKET_BASE = "https://gamma-api.polymarket.com"
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 
 
+def _is_2026_event(event: dict) -> bool:
+    """Accept explicit 2026 labels or Kalshi's common ``-26`` ticker form."""
+    ticker = str(event.get("event_ticker", ""))
+    years = re.findall(r"(?:^|-)(20\d{2}|\d{2})(?:-|$)", ticker)
+    if years:
+        return years[-1] in {"26", "2026"}
+    return "2026" in str(event.get("sub_title", ""))
+
+
 def _polymarket_inventory() -> list[dict]:
     rows = []
     for offset in range(0, 10000, 100):
@@ -180,7 +189,7 @@ def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
         for event in inventory:
             if str(event.get("series_ticker", "")).upper() != series:
                 continue
-            if "2026" not in str(event.get("sub_title", "")) and "2026" not in str(event.get("event_ticker", "")):
+            if not _is_2026_event(event):
                 continue
             for market in event.get("markets", []):
                 label = " ".join(
@@ -207,7 +216,7 @@ def _kalshi_candidates(title: str, inventory: list[dict]) -> list[dict]:
     for event in inventory:
         if str(event.get("title", "")).lower() != event_title:
             continue
-        if "2026" not in str(event.get("sub_title", "")) and "2026" not in str(event.get("event_ticker", "")):
+        if not _is_2026_event(event):
             continue
         for market in event.get("markets", []):
             label = " ".join(
@@ -344,7 +353,7 @@ def main() -> None:
     csv_output = pathlib.Path(args.csv_out)
     csv_output.parent.mkdir(parents=True, exist_ok=True)
     with csv_output.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(csv_rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=list(csv_rows[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(csv_rows)
     print(f"wrote {output} ({len(markets)} SIG markets)")

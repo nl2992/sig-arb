@@ -2,9 +2,9 @@
 
 > Generated from the authenticated SIG market universe. This file is a point-in-time index; run the generator again when the universe changes.
 
-Generated: `2026-09-30T08:35:00.696124+00:00`
+Generated: `2026-09-30T08:46:33.029459+00:00`
 Market count: **237**
-Kalshi candidate links found: **193**
+Kalshi candidate links found: **191**
 Polymarket candidate links found: **195**
 Production cross-venue mappings: **0 approved** (the registry remains intentionally empty until settlement rules are manually verified).
 
@@ -37,8 +37,8 @@ Each row has the intended SIG, Kalshi, and Polymarket slots. Links marked `candi
 | 376 | Will the Republican Party win the NH-01 House race? | [SIG](https://sig.thesuper.market/markets/376) | [candidate](https://kalshi.com/markets/housenh1/housenh1-26) | [candidate](https://polymarket.com/event/nh-01-house-election-winner/will-the-republican-party-win-the-nh-01-house-seat) | Both venue candidates; review |
 | 375 | Will the Democratic Party win the NH-01 House race? | [SIG](https://sig.thesuper.market/markets/375) | Not found | [candidate](https://polymarket.com/event/nh-01-house-election-winner/will-the-democratic-party-win-the-nh-01-house-seat) | Polymarket candidate; Kalshi unresolved |
 | 374 | Will the Republican Party win the Oklahoma Governor? | [SIG](https://sig.thesuper.market/markets/374) | [candidate](https://kalshi.com/markets/govpartyok/govpartyok-26) | [candidate](https://polymarket.com/event/oklahoma-governor-winner-2026/will-the-republicans-win-the-oklahoma-governor-race-in-2026) | Both venue candidates; review |
-| 373 | Will the Republican Party win the New Hampshire Governor? | [SIG](https://sig.thesuper.market/markets/373) | [candidate](https://kalshi.com/markets/govpartynh/govpartynh-28) | [candidate](https://polymarket.com/event/new-hampshire-governor-winner-2026/will-the-republicans-win-the-new-hampshire-governor-race-in-2026) | Both venue candidates; review |
-| 372 | Will the Democratic Party win the New Hampshire Governor? | [SIG](https://sig.thesuper.market/markets/372) | [candidate](https://kalshi.com/markets/govpartynh/govpartynh-28) | [candidate](https://polymarket.com/event/new-hampshire-governor-winner-2026/will-the-democrats-win-the-new-hampshire-governor-race-in-2026) | Both venue candidates; review |
+| 373 | Will the Republican Party win the New Hampshire Governor? | [SIG](https://sig.thesuper.market/markets/373) | Not found | [candidate](https://polymarket.com/event/new-hampshire-governor-winner-2026/will-the-republicans-win-the-new-hampshire-governor-race-in-2026) | Polymarket candidate; Kalshi unresolved |
+| 372 | Will the Democratic Party win the New Hampshire Governor? | [SIG](https://sig.thesuper.market/markets/372) | Not found | [candidate](https://polymarket.com/event/new-hampshire-governor-winner-2026/will-the-democrats-win-the-new-hampshire-governor-race-in-2026) | Polymarket candidate; Kalshi unresolved |
 | 371 | Will the Republican Party win the Massachusetts Governor? | [SIG](https://sig.thesuper.market/markets/371) | [candidate](https://kalshi.com/markets/govpartyma/govpartyma-26) | [candidate](https://polymarket.com/event/massachusetts-governor-winner-2026/will-the-republicans-win-the-massachusetts-governor-race-in-2026) | Both venue candidates; review |
 | 370 | Will the Democratic Party win the Massachusetts Governor? | [SIG](https://sig.thesuper.market/markets/370) | [candidate](https://kalshi.com/markets/govpartyma/govpartyma-26) | [candidate](https://polymarket.com/event/massachusetts-governor-winner-2026/will-the-democrats-win-the-massachusetts-governor-race-in-2026) | Both venue candidates; review |
 | 369 | Will the Republican Party win the Alaska Governor? | [SIG](https://sig.thesuper.market/markets/369) | Not found | Not found | No venue match found |

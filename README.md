@@ -180,6 +180,19 @@ are research candidates only and require a current SIG executable side plus a
 configurable price gap. Missing history, stale data, missing SIG liquidity,
 and unapproved mappings are rejected explicitly.
 
+Run the combined live, read-only scan once or every minute. It refreshes SIG
+books and public Kalshi/Polymarket observations, persists mapped observations,
+applies the default 5% SIG ROI hurdle, and reports movement, executable gaps,
+and research-only relative-value z-scores. It never places orders:
+
+```bash
+SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --once
+SIG_COOKIE='...' PYTHONPATH=. python3 crossvenue.py live --interval 60
+```
+
+The production mapping registry intentionally remains empty until each
+contract's settlement rules and outcome mapping are reviewed and approved.
+
 The current point-in-time market index, including links to all SIG markets and
 the review status of venue mappings, is in
 [docs/market-links.md](docs/market-links.md). Regenerate it from the

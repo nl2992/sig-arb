@@ -8,6 +8,7 @@ from crossvenue_adapters import KalshiAdapter, PolymarketAdapter
 from crossvenue_models import MarketMatch, PriceObservation
 from market_matches import approved_matches, load_registry
 from movement_scanner import scan_movements
+from relative_value import scan_pairs
 from signals import Snapshot
 
 
@@ -71,6 +72,20 @@ class CrossVenueTests(unittest.TestCase):
         self.assertEqual(0.5, k.observations(1)[0].last)
         p = PolymarketAdapter(session=Fake([{"id": "P1", "question": "Q", "outcomes": '["Yes", "No"]', "outcomePrices": '["0.4", "0.6"]', "active": True, "closed": False}]))
         self.assertEqual(2, len(p.observations(1)))
+
+    def test_relative_value_is_review_gated_and_reports_z_score(self):
+        rows = []
+        for i in range(12):
+            rows.append({"observed_at": f"2026-09-30T00:{i:02d}:00+00:00",
+                         "sig_market_id": 386, "reference_venue": "kalshi",
+                         "reference_market_id": "KX1", "reference_outcome_id": "YES",
+                         "sig_price": 0.5, "reference_price": 0.6 if i == 11 else 0.5})
+        match = MarketMatch(386, "kalshi", "KX1", "YES", status="APPROVED",
+                            reviewed_at="2026-09-30T00:00:00+00:00", evidence="fixture")
+        report = scan_pairs(rows, [match], min_points=10)
+        self.assertEqual("RESEARCH_CANDIDATE", report[0]["status"])
+        self.assertGreater(abs(report[0]["z_score"]), 2)
+        self.assertEqual([], scan_pairs(rows, [MarketMatch(386, "kalshi", "KX1", "YES")], min_points=10))
 
 
 if __name__ == "__main__":
