@@ -84,6 +84,10 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual('REPLAY', data['status'])
         self.assertTrue(data['read_only'])
 
+    def test_news_status_is_explicit_when_no_breaker_is_active(self):
+        data = report(self.snapshot, {'roi': ['0']})
+        self.assertTrue(all(row['news_status'] == 'CLEAR' for row in data['signals']))
+
 
 if __name__ == '__main__':
     unittest.main()

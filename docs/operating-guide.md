@@ -58,6 +58,10 @@ zero in this stage.
   before considering any candidate.
 - Review related news for material events. News can pause a race, but sentiment
   is context rather than a substitute for contract rules or executable depth.
+- Record material events in `config/news_circuit_breakers.json` with affected
+  SIG market IDs, a reason, source, and expiry. Active records appear in
+  opportunity `execution_risk` and block execution readiness; expired or
+  cleared records do not. The system does not infer sentiment automatically.
 - Keep a written decision record for every approved mapping, rejected signal,
   manual punt, and execution exception.
 - Run paper/shadow mode before any human-confirmed orders. Use `bot.py` only

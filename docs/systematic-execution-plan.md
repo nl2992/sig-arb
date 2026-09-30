@@ -67,6 +67,12 @@ An opportunity is actionable only when all of these are true:
 5. Position, gross, per-race, daily-loss, and venue exposure limits pass.
 6. No news circuit breaker, resolution uncertainty, or kill switch is active.
 
+News handling is explicit and reviewable: `news_guard.py` reads the operator
+ledger at `config/news_circuit_breakers.json`, applies only active and
+unexpired records, and adds `NEWS_CIRCUIT_BREAKER` to affected opportunities.
+Sentiment models may support research notes later, but their scores never
+clear a circuit breaker or authorize an order.
+
 The dashboard may show candidates that fail one or more gates, but it must label
 the failing gate and must not present them as executable orders.
 

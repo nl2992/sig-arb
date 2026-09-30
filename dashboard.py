@@ -20,8 +20,10 @@ from market_matches import load_registry
 from movement_scanner import scan_movements
 from relative_value import scan_pairs
 from portfolio import fetch_sig_portfolio
+from news_guard import active_breakers
 
 ROOT = Path(__file__).parent
+NEWS_BREAKERS = ROOT / 'config' / 'news_circuit_breakers.json'
 
 
 def _read_history(path=ROOT / 'logs' / 'crossvenue-history.jsonl'):
@@ -60,6 +62,7 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     observation_index = {(row.venue, row.market_id, row.outcome_id.upper()): row
                          for row in observations}
     books = snapshot.books()
+    breakers = active_breakers(NEWS_BREAKERS)
     enriched = []
     now = dt.datetime.now(dt.timezone.utc)
     for candidate in movement.get('candidates', []):
@@ -86,8 +89,11 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
             'fee_status': 'UNVERIFIED_PUBLIC_SCHEDULE',
             'roi_estimate': round(candidate['gap_pp'] / abs(candidate['sig_price']) / 100, 6) if candidate.get('gap_pp') and candidate.get('sig_price') else None,
             'execution_risk': ['RESEARCH_ONLY', 'MULTI_VENUE_FILL_RISK', 'FEES_UNVERIFIED'],
+            'news_status': 'ACTIVE_CIRCUIT_BREAKER' if breakers.get(candidate['sig_market_id']) else 'CLEAR',
             'execution_ready': False,
         })
+        if breakers.get(candidate['sig_market_id']):
+            candidate['execution_risk'].append('NEWS_CIRCUIT_BREAKER')
         enriched.append(candidate)
     market_counts = {venue: len(data.get('markets', [])) for venue, data in payload.items()}
     observation_counts = {venue: len(data.get('observations', [])) for venue, data in payload.items()}
@@ -126,6 +132,7 @@ def report(snapshot, params, crossvenue=None):
     min_roi = number("roi", 5) / 100
     groups = group_markets(snapshot.markets)
     exhaustive = load_exhaustive()
+    breakers = active_breakers(NEWS_BREAKERS)
     scan_report = scan_diagnostics(snapshot, exhaustive, fee_per_share=fee,
                                    min_edge=edge, cash=budget or None)
     results = scan_report.opportunities
@@ -142,6 +149,7 @@ def report(snapshot, params, crossvenue=None):
             mapping_status='LOCAL_SIG', settlement_status='SIG_RULES_UNVERIFIED',
             fee_assumption=fee,
             execution_risk=['PARTIAL_FILL', 'QUOTE_AGE_CHECK_REQUIRED'],
+            news_status='ACTIVE_CIRCUIT_BREAKER' if any(breakers.get(l.market_id) for l in r.legs) else 'CLEAR',
             execution_ready=False,
             vwap=sum(1-l.vwap if no else l.vwap for l in r.legs),
             steps=r.steps,
@@ -149,6 +157,8 @@ def report(snapshot, params, crossvenue=None):
                        side="BUY NO" if no else "BUY YES", qty=l.qty,
                        vwap=1-l.vwap if no else l.vwap,
                        limit=1-l.limit if no else l.limit) for l in r.legs])
+        if row['news_status'] == 'ACTIVE_CIRCUIT_BREAKER':
+            row['execution_risk'].append('NEWS_CIRCUIT_BREAKER')
         if r.pnl >= minimum and r.roi + 1e-12 >= min_roi:
             rows.append(row)
         elif r.pnl >= minimum:
