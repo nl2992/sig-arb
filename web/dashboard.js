@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 const fmt=(n,d=2)=>Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data=null, selected=null, busy=false, failed=false;
-let params=new URLSearchParams({fee:'0',edge:'0',profit:'1',budget:'0'});
+let params=new URLSearchParams({fee:'0',edge:'0',profit:'1',budget:'0',roi:'10'});
 function filtered(){return (data?.signals||[]).filter(r=>r.race.toLowerCase().includes($('search').value.toLowerCase())).sort((a,b)=>b[$('sort').value]-a[$('sort').value]);}
 function render(){
  if(!data)return;
@@ -28,7 +28,7 @@ function render(){
 function draw(r){const c=$('chart');if(!c)return;const rect=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;c.width=rect.width*dpr;c.height=175*dpr;const x=c.getContext('2d');x.scale(dpr,dpr);const w=rect.width,h=175;x.strokeStyle='#e0e7e2';for(let i=0;i<4;i++){x.beginPath();x.moveTo(0,i*50+15);x.lineTo(w,i*50+15);x.stroke();}const pts=[{cum_qty:0,cum_pnl:0},...r.steps];x.beginPath();pts.forEach((p,i)=>{const a=8+p.cum_qty/r.qty*(w-16),b=h-10-p.cum_pnl/r.profit*(h-25);i?x.lineTo(a,b):x.moveTo(a,b)});x.strokeStyle='#159563';x.lineWidth=2.5;x.stroke();x.lineTo(w-8,h-10);x.lineTo(8,h-10);x.closePath();x.fillStyle='rgba(21,149,99,.08)';x.fill();}
 function freshness(){if(!data)return;const age=(Date.now()-Date.parse(data.ts))/1000;$('status').textContent=failed?'Scan failed · stale':data.mode==='replay'?'Replay data':age>60?'Stale snapshot':'Live · read only';$('status').style.color=failed||age>60?'#a2612e':'#19744b';}
 async function refresh(){if(busy)return;busy=true;$('refresh').disabled=true;$('status').textContent='Scanning…';try{const response=await fetch('/api/signals?'+params,{signal:AbortSignal.timeout(120000)});const result=await response.json();if(!response.ok)throw Error(result.error||'Scan failed');data=result;failed=false;$('error').hidden=true;if(selected===null&&data.signals.length)selected=data.signals[0].race+data.signals[0].direction;render();}catch(e){failed=true;$('error').textContent=e.message+' Last successful results, if present, are retained.';$('error').hidden=false;$('status').textContent='Scan failed';freshness();}finally{busy=false;$('refresh').disabled=false;}}
-$('filters').onsubmit=e=>{e.preventDefault();if(busy)return;params=new URLSearchParams(Object.fromEntries(['fee','budget','edge','profit'].map(k=>[k,$(k).value||'0'])));refresh();};
+$('filters').onsubmit=e=>{e.preventDefault();if(busy)return;params=new URLSearchParams(Object.fromEntries(['fee','budget','edge','profit','roi'].map(k=>[k,$(k).value||'0'])));refresh();};
 $('refresh').onclick=refresh;$('search').oninput=render;$('sort').onchange=render;
 window.addEventListener('resize',()=>{const r=data?.signals.find(r=>r.race+r.direction===selected);if(r)draw(r)});
 setInterval(()=>{if($('auto').checked&&!document.hidden)refresh();},30000);setInterval(()=>{if(!busy)freshness();},5000);refresh();

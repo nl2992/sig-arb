@@ -10,7 +10,7 @@ class DashboardTests(unittest.TestCase):
         self.snapshot = Snapshot.load('fixtures/sample_snapshot.json')
 
     def test_depth_weighted_prices_and_profit(self):
-        rows = report(self.snapshot, {})['signals']
+        rows = report(self.snapshot, {'roi': ['0']})['signals']
         self.assertEqual(rows[0]['race'], 'Delaware Senate')
         synthetic = next(r for r in rows if r['race'] == 'Synthetic Senate')
         self.assertEqual(synthetic['qty'], 700)
@@ -21,7 +21,7 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(all(l['limit'] >= l['vwap'] for l in synthetic['legs']))
 
     def test_budget_and_fees(self):
-        rows = report(self.snapshot, {'budget': ['100'], 'fee': ['0.001']})['signals']
+        rows = report(self.snapshot, {'budget': ['100'], 'fee': ['0.001'], 'roi': ['0']})['signals']
         self.assertTrue(rows)
         for r in rows:
             self.assertLessEqual(r['capital'], 100)
@@ -36,9 +36,15 @@ class DashboardTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 report(self.snapshot, {'fee': [value]})
 
+    def test_net_roi_hurdle(self):
+        self.assertEqual(report(self.snapshot, {})['signals'], [])
+        rows = report(self.snapshot, {'roi': ['3.1']})['signals']
+        self.assertEqual([r['race'] for r in rows], ['Synthetic Senate'])
+        self.assertEqual(report(self.snapshot, {'roi': ['3.1'], 'fee': ['0.01']})['signals'], [])
+
     def test_buy_yes_requires_exhaustive_allowlist(self):
         with patch('dashboard.load_exhaustive', return_value=set()):
-            self.assertTrue(all(r['direction'] == 'SELL_ALL' for r in report(self.snapshot, {})['signals']))
+            self.assertTrue(all(r['direction'] == 'SELL_ALL' for r in report(self.snapshot, {'roi': ['0']})['signals']))
 
 
 if __name__ == '__main__':

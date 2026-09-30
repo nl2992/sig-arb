@@ -28,6 +28,7 @@ def report(snapshot, params):
     budget = number("budget", 0)
     edge = number("edge", 0)
     minimum = number("profit", 1)
+    min_roi = number("roi", 10) / 100
     books = snapshot.books()
     groups = group_markets(snapshot.markets)
     exhaustive = load_exhaustive()
@@ -36,7 +37,7 @@ def report(snapshot, params):
     titles = {m["id"]: m["title"] for m in snapshot.markets}
     rows = []
     for r in results:
-        if r.pnl < minimum:
+        if r.pnl < minimum or r.roi + 1e-12 < min_roi:
             continue
         no = r.direction == "SELL_ALL"
         rows.append(dict(
