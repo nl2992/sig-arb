@@ -106,6 +106,19 @@ class CrossVenueTests(unittest.TestCase):
         adapter = PolymarketAdapter(session=Paged())
         self.assertEqual(['P1', 'P2'], [m.market_id for m in adapter.markets(2)])
 
+    def test_zero_market_limit_means_all_pages(self):
+        class Paged:
+            def get(self, url, *args, **kwargs):
+                cursor = kwargs.get('params', {}).get('cursor')
+                ticker = 'KX1' if not cursor else 'KX2'
+                class R:
+                    def raise_for_status(self): pass
+                    def json(self): return {'markets': [{'ticker': ticker, 'title': 'Q', 'status': 'active'}],
+                                           'cursor': '' if cursor else 'next'}
+                return R()
+        adapter = KalshiAdapter(session=Paged())
+        self.assertEqual(['KX1', 'KX2'], [m.market_id for m in adapter.markets(0)])
+
     def test_polymarket_clob_books_are_normalized(self):
         class FakeCLOB:
             def get(self, url, *args, **kwargs):

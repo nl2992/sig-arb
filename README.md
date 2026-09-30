@@ -235,6 +235,9 @@ indicative Gamma prices. Kalshi books use the public YES/NO bid ladders and
 derive complementary asks; Polymarket books use the public CLOB token books.
 Set `POLYMARKET_DEPTH_LIMIT` to a positive market count only when an explicitly
 bounded research run is needed; the payload labels that coverage as bounded.
+The dashboard requests all active venue inventory by default. Set
+`CROSSVENUE_MARKET_LIMIT` to a positive value for an intentionally bounded run;
+the response labels that inventory coverage accordingly.
 
 The no-order paper/shadow runner is `paper.py`; it journals simulated fills,
 partial-fill residuals, and reconciliation status, and honors the file-based

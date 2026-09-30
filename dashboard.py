@@ -3,6 +3,7 @@ import argparse
 import datetime as dt
 import json
 import math
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -246,7 +247,10 @@ class Source:
             if self.replay:
                 return {}
             if self.crossvenue_cache is None or time.monotonic() - self.crossvenue_fetched >= 60:
-                self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], 1000)
+                inventory_limit = int(os.environ.get('CROSSVENUE_MARKET_LIMIT', '0'))
+                if inventory_limit < 0:
+                    raise ValueError('CROSSVENUE_MARKET_LIMIT must be nonnegative')
+                self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], inventory_limit)
                 self.crossvenue_fetched = time.monotonic()
             return self.crossvenue_cache
 

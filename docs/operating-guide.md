@@ -19,7 +19,9 @@ movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes
 the raw public inventory for inspection. Public venue depth is explicitly
 labelled in the response: the adapter fetches books for all returned Kalshi and
 Polymarket markets by default and falls back to indicative observations when a
-book is unavailable. No cross-venue row is execution-ready by default.
+book is unavailable. The dashboard requests all active inventory by default;
+bounded overrides are labelled in the payload. No cross-venue row is
+execution-ready by default.
 
 When the Python SIG client cannot read the signed-in session, use the browser
 relay described in `README.md`. The dashboard writes each validated relay

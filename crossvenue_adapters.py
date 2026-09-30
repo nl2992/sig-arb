@@ -56,8 +56,8 @@ class KalshiAdapter(PublicAdapter):
 
     def markets(self, limit: int = 1000) -> List[MarketMetadata]:
         rows, cursor = [], ""
-        while len(rows) < limit:
-            page_size = min(200, limit - len(rows))
+        while limit <= 0 or len(rows) < limit:
+            page_size = 200 if limit <= 0 else min(200, limit - len(rows))
             params = {"status": "open", "limit": page_size}
             if cursor:
                 params["cursor"] = cursor
@@ -69,7 +69,7 @@ class KalshiAdapter(PublicAdapter):
                 break
             cursor = next_cursor
         observed = _now()
-        return [self._market(item, observed) for item in rows[:limit]]
+        return [self._market(item, observed) for item in (rows if limit <= 0 else rows[:limit])]
 
     def observations(self, limit: int = 1000, markets: List[MarketMetadata] | None = None) -> List[PriceObservation]:
         market_rows = markets if markets is not None else self.markets(limit)
@@ -212,8 +212,8 @@ class PolymarketAdapter(PublicAdapter):
 
     def markets(self, limit: int = 1000) -> List[MarketMetadata]:
         rows, offset = [], 0
-        page_size = min(1000, limit)
-        while len(rows) < limit:
+        page_size = 1000 if limit <= 0 else min(1000, limit)
+        while limit <= 0 or len(rows) < limit:
             payload = self._get("/markets", active="true", closed="false",
                                 limit=page_size, offset=offset)
             page = payload if isinstance(payload, list) else payload.get("markets", [])
@@ -222,7 +222,7 @@ class PolymarketAdapter(PublicAdapter):
                 break
             offset += len(page)
         observed = _now()
-        return [self._market(item, observed) for item in rows[:limit]]
+        return [self._market(item, observed) for item in (rows if limit <= 0 else rows[:limit])]
 
     def observations(self, limit: int = 1000, markets: List[MarketMetadata] | None = None) -> List[PriceObservation]:
         market_rows = markets if markets is not None else self.markets(limit)
@@ -296,5 +296,6 @@ def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
             "observations": [o.to_dict() for o in observation_rows],
             "books": books,
             "book_coverage": "ALL_RETURNED_MARKETS" if venue == "kalshi" or depth_limit <= 0 else "BOUNDED_MARKET_COUNT",
+            "inventory_coverage": "ALL_ACTIVE_INVENTORY" if limit <= 0 else "BOUNDED_MARKET_COUNT",
         }
     return result
