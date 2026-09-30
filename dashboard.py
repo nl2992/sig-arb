@@ -15,7 +15,7 @@ from sig_client import Client
 from kelly import size_position
 from news import fetch_news
 from signals import Snapshot, load_exhaustive, scan_diagnostics
-from crossvenue_adapters import fetch_public
+from crossvenue_adapters import fetch_public, load_targeted_market_ids
 from crossvenue_models import PriceObservation
 from market_matches import load_registry
 from movement_scanner import scan_movements
@@ -260,7 +260,9 @@ class Source:
                 inventory_limit = int(os.environ.get('CROSSVENUE_MARKET_LIMIT', '0'))
                 if inventory_limit < 0:
                     raise ValueError('CROSSVENUE_MARKET_LIMIT must be nonnegative')
-                self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], inventory_limit)
+                targeted = load_targeted_market_ids(ROOT / 'docs' / 'market-links.csv')
+                self.crossvenue_cache = fetch_public(['kalshi', 'polymarket'], inventory_limit,
+                                                     market_ids=targeted)
                 self.crossvenue_fetched = time.monotonic()
             return self.crossvenue_cache
 

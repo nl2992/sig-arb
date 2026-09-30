@@ -6,7 +6,7 @@ import datetime as dt
 import json
 import pathlib
 
-from crossvenue_adapters import fetch_public
+from crossvenue_adapters import fetch_public, load_targeted_market_ids
 from market_matches import load_registry
 from news_guard import load_circuit_breakers
 from sig_client import PLACE_PAYLOAD_CONFIRMED
@@ -23,6 +23,7 @@ def _age(snapshot: Snapshot) -> float:
 
 
 def readiness(*, snapshot_path=None, public=False, public_limit=0,
+              targeted=False,
               matches_path=ROOT / "fixtures/crossvenue/matches.json",
               news_path=ROOT / "config/news_circuit_breakers.json") -> dict:
     checks = {}
@@ -52,12 +53,13 @@ def readiness(*, snapshot_path=None, public=False, public_limit=0,
 
     if public:
         try:
-            venues = fetch_public(["kalshi", "polymarket"], public_limit)
+            market_ids = load_targeted_market_ids(ROOT / "docs/market-links.csv") if targeted else None
+            venues = fetch_public(["kalshi", "polymarket"], public_limit, market_ids=market_ids)
             checks["public_venues"] = {"status": "PASS",
                                         "market_counts": {v: len(p["markets"]) for v, p in venues.items()},
                                         "inventory_coverage": {v: p["inventory_coverage"] for v, p in venues.items()},
                                         "book_coverage": {v: p["book_coverage"] for v, p in venues.items()},
-                                        "complete": all(p["inventory_coverage"] == "ALL_ACTIVE_INVENTORY"
+                                        "complete": all(p["inventory_coverage"] in {"ALL_ACTIVE_INVENTORY", "TARGETED_SIG_UNIVERSE"}
                                                         for p in venues.values())}
         except Exception as exc:
             checks["public_venues"] = {"status": "FAIL", "error": str(exc)}
@@ -80,12 +82,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sig-snapshot", type=pathlib.Path)
     parser.add_argument("--public", action="store_true")
+    parser.add_argument("--targeted", action="store_true",
+                        help="use native venue IDs from the fixed SIG universe")
     parser.add_argument("--public-limit", type=int, default=0)
     args = parser.parse_args(argv)
     if args.public_limit < 0:
         parser.error("--public-limit must be nonnegative")
     print(json.dumps(readiness(snapshot_path=args.sig_snapshot, public=args.public,
-                               public_limit=args.public_limit), indent=2))
+                               public_limit=args.public_limit, targeted=args.targeted), indent=2))
 
 
 if __name__ == "__main__":

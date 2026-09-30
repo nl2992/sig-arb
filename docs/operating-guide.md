@@ -16,18 +16,20 @@ PYTHONPATH=. python3 system_check.py
 ```
 
 `system_check.py` is a read-only readiness audit. Add `--sig-snapshot
-logs/browser_snapshot.json --public` to verify current SIG freshness and venue
-coverage; paper readiness remains false until those inputs pass completely.
-Bounded venue runs are useful for testing but do not establish readiness. It
-reports paper readiness separately from the blocked live-execution gate.
+logs/browser_snapshot.json --public --targeted` to verify current SIG freshness
+and coverage for the fixed SIG universe; paper readiness remains false until
+those inputs pass completely. Bounded venue runs are useful for testing but do
+not establish readiness. It reports paper readiness separately from the
+blocked live-execution gate.
 
 The dashboard shows SIG signals, venue coverage, mapped/approved counts,
 movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes
 the raw public inventory for inspection. Public venue depth is explicitly
 labelled in the response: the adapter fetches books for all returned Kalshi and
 Polymarket markets by default and falls back to indicative observations when a
-book is unavailable. The dashboard requests all active inventory by default;
-bounded overrides are labelled in the payload. No cross-venue row is
+book is unavailable. The dashboard uses native IDs from
+`docs/market-links.csv`, so coverage is restricted to the fixed SIG research
+universe and labelled `TARGETED_SIG_UNIVERSE`. No cross-venue row is
 execution-ready by default.
 
 When the Python SIG client cannot read the signed-in session, use the browser

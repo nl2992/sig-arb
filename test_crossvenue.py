@@ -138,6 +138,18 @@ class CrossVenueTests(unittest.TestCase):
         self.assertEqual([], adapter.markets(1))
         self.assertEqual(2, session.calls)
 
+    def test_targeted_market_id_inventory_uses_native_endpoints(self):
+        class Fake:
+            def get(self, url, *args, **kwargs):
+                class R:
+                    status_code = 200
+                    headers = {}
+                    def raise_for_status(self): pass
+                    def json(self): return {'market': {'ticker': 'KX1', 'title': 'Q', 'status': 'active'}}
+                return R()
+        adapter = KalshiAdapter(session=Fake())
+        self.assertEqual(['KX1'], [m.market_id for m in adapter.markets_by_ids(['KX1'])])
+
     def test_polymarket_clob_books_are_normalized(self):
         class FakeCLOB:
             def get(self, url, *args, **kwargs):

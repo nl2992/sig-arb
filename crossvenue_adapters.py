@@ -6,14 +6,28 @@ do not contain authentication or order endpoints.
 from __future__ import annotations
 
 import datetime as dt
+import csv
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 
 from crossvenue_models import MarketMetadata, PriceObservation, normalize_ts, parse_float
+
+
+def load_targeted_market_ids(path="docs/market-links.csv") -> dict[str, list[str]]:
+    """Load native venue IDs for the fixed SIG research universe."""
+    result = {"kalshi": [], "polymarket": []}
+    with open(path, newline="") as handle:
+        for row in csv.DictReader(handle):
+            for venue in result:
+                market_id = str(row.get(f"{venue}_market_id") or "").strip()
+                if market_id and market_id not in result[venue]:
+                    result[venue].append(market_id)
+    return result
 
 
 def _now() -> str:
@@ -81,6 +95,19 @@ class KalshiAdapter(PublicAdapter):
         observed = _now()
         return [self._market(item, observed) for item in (rows if limit <= 0 else rows[:limit])]
 
+    def markets_by_ids(self, market_ids: Iterable[str]) -> List[MarketMetadata]:
+        observed = _now()
+        out = []
+        for market_id in market_ids:
+            try:
+                payload = self._get(f"/markets/{market_id}")
+            except requests.RequestException:
+                continue
+            item = payload.get("market", payload) if isinstance(payload, dict) else {}
+            if item:
+                out.append(self._market(item, observed))
+        return out
+
     def observations(self, limit: int = 1000, markets: List[MarketMetadata] | None = None) -> List[PriceObservation]:
         market_rows = markets if markets is not None else self.markets(limit)
         observed = _now()
@@ -113,16 +140,16 @@ class KalshiAdapter(PublicAdapter):
 
     def books(self, markets: List[MarketMetadata], depth: int = 100) -> List[dict]:
         """Fetch public YES/NO bid ladders and derive complementary asks."""
-        out = []
-        for market in markets:
+        def fetch_one(market):
             try:
                 payload = self._get(f"/markets/{market.market_id}/orderbook", depth=depth)
             except requests.RequestException:
-                continue
+                return []
             orderbook = payload.get("orderbook_fp", {}) if isinstance(payload, dict) else {}
             yes_bids = self._book_levels(orderbook.get("yes_dollars"))
             no_bids = self._book_levels(orderbook.get("no_dollars"))
             observed = _now()
+            rows = []
 
             def complement(levels):
                 return [{"price": round(1 - row["price"], 10), "size": row["size"]}
@@ -132,7 +159,7 @@ class KalshiAdapter(PublicAdapter):
                                         ("NO", no_bids, complement(yes_bids))):
                 bids = sorted(bids, key=lambda row: row["price"], reverse=True)
                 asks = sorted(asks, key=lambda row: row["price"])
-                out.append({
+                rows.append({
                     "venue": self.venue, "market_id": market.market_id,
                     "outcome_id": outcome, "observed_at": observed,
                     "bids": bids, "asks": asks,
@@ -142,6 +169,13 @@ class KalshiAdapter(PublicAdapter):
                     "best_ask_size": asks[0]["size"] if asks else None,
                     "source": "kalshi-orderbook",
                 })
+            return rows
+
+        workers = max(1, int(os.getenv("VENUE_BOOK_WORKERS", "8")))
+        out = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for rows in executor.map(fetch_one, markets):
+                out.extend(rows)
         return out
 
     def _market(self, item: dict, observed: str) -> MarketMetadata:
@@ -189,9 +223,9 @@ class PolymarketAdapter(PublicAdapter):
 
     def books(self, markets: List[MarketMetadata], limit: int = 100) -> List[dict]:
         """Fetch bounded public CLOB books; failures are isolated per token."""
-        out = []
         selected = markets if limit <= 0 else markets[:limit]
-        for market in selected:
+        def fetch_one(market):
+            rows = []
             raw = market.raw or {}
             token_ids = _json_list(raw.get("clobTokenIds"))
             outcomes = [x["outcome_id"] for x in market.outcomes]
@@ -204,7 +238,7 @@ class PolymarketAdapter(PublicAdapter):
                 asks = self._levels(payload.get("asks"))
                 bids.sort(key=lambda x: x["price"], reverse=True)
                 asks.sort(key=lambda x: x["price"])
-                out.append({
+                rows.append({
                     "venue": self.venue, "market_id": market.market_id,
                     "outcome_id": outcomes[index] if index < len(outcomes) else str(index),
                     "token_id": str(token_id), "observed_at": _now(),
@@ -216,6 +250,13 @@ class PolymarketAdapter(PublicAdapter):
                     "best_ask_size": asks[0]["size"] if asks else None,
                     "source": "polymarket-clob",
                 })
+            return rows
+
+        workers = max(1, int(os.getenv("VENUE_BOOK_WORKERS", "8")))
+        out = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for rows in executor.map(fetch_one, selected):
+                out.extend(rows)
         return out
 
     def markets(self, limit: int = 1000) -> List[MarketMetadata]:
@@ -231,6 +272,19 @@ class PolymarketAdapter(PublicAdapter):
             offset += len(page)
         observed = _now()
         return [self._market(item, observed) for item in (rows if limit <= 0 else rows[:limit])]
+
+    def markets_by_ids(self, market_ids: Iterable[str]) -> List[MarketMetadata]:
+        observed = _now()
+        out = []
+        for market_id in market_ids:
+            try:
+                payload = self._get(f"/markets/{market_id}")
+            except requests.RequestException:
+                continue
+            item = payload if isinstance(payload, dict) else {}
+            if item:
+                out.append(self._market(item, observed))
+        return out
 
     def observations(self, limit: int = 1000, markets: List[MarketMetadata] | None = None) -> List[PriceObservation]:
         market_rows = markets if markets is not None else self.markets(limit)
@@ -266,13 +320,14 @@ class PolymarketAdapter(PublicAdapter):
         )
 
 
-def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
+def fetch_public(venues: Iterable[str], limit: int = 1000, market_ids: dict | None = None) -> dict:
     """Fetch public inventories and indicative observations for named venues."""
     adapters = {"kalshi": KalshiAdapter(), "polymarket": PolymarketAdapter()}
     result = {}
     for venue in venues:
         adapter = adapters[venue]
-        market_rows = adapter.markets(limit)
+        ids = (market_ids or {}).get(venue)
+        market_rows = adapter.markets_by_ids(ids) if ids is not None else adapter.markets(limit)
         observation_rows = adapter.observations(limit, market_rows)
         books = []
         if venue == "kalshi":
@@ -304,6 +359,7 @@ def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
             "observations": [o.to_dict() for o in observation_rows],
             "books": books,
             "book_coverage": "ALL_RETURNED_MARKETS" if venue == "kalshi" or depth_limit <= 0 else "BOUNDED_MARKET_COUNT",
-            "inventory_coverage": "ALL_ACTIVE_INVENTORY" if limit <= 0 else "BOUNDED_MARKET_COUNT",
+            "inventory_coverage": "TARGETED_SIG_UNIVERSE" if ids is not None else
+                                  "ALL_ACTIVE_INVENTORY" if limit <= 0 else "BOUNDED_MARKET_COUNT",
         }
     return result

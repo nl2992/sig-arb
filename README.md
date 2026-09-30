@@ -235,9 +235,11 @@ indicative Gamma prices. Kalshi books use the public YES/NO bid ladders and
 derive complementary asks; Polymarket books use the public CLOB token books.
 Set `POLYMARKET_DEPTH_LIMIT` to a positive market count only when an explicitly
 bounded research run is needed; the payload labels that coverage as bounded.
-The dashboard requests all active venue inventory by default. Set
-`CROSSVENUE_MARKET_LIMIT` to a positive value for an intentionally bounded run;
-the response labels that inventory coverage accordingly.
+The dashboard requests the native Kalshi and Polymarket IDs in
+`docs/market-links.csv`, keeping the scan restricted to the fixed SIG research
+universe. The response labels this as `TARGETED_SIG_UNIVERSE`. Direct venue
+inventory commands can still use `CROSSVENUE_MARKET_LIMIT` for bounded catalog
+research.
 
 The no-order paper/shadow runner is `paper.py`; it journals simulated fills,
 partial-fill residuals, and reconciliation status, and honors the file-based
@@ -246,7 +248,7 @@ kill switch at `logs/KILL_SWITCH`.
 Run `PYTHONPATH=. python3 system_check.py` before a session for a read-only
 readiness report. Paper readiness stays false until a fresh SIG snapshot and a
 complete public venue coverage check have both passed; use `--sig-snapshot
-logs/browser_snapshot.json --public` for that check. A bounded public run is
-reported but is not complete readiness. The report always keeps
+logs/browser_snapshot.json --public --targeted` for the fixed SIG universe.
+A bounded catalog run is reported but is not complete readiness. The report always keeps
 `ready_for_live` false until the separate execution gates are explicitly
 verified.
