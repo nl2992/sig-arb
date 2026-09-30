@@ -223,8 +223,9 @@ The recurring workflow and staged execution gates are documented in
 Dashboard opportunity rows carry explicit freshness, mapping, settlement, fee,
 liquidity, and execution-risk fields; `execution_ready` remains false until
 the relevant gates are independently verified. Public venue ingestion includes
-Kalshi top-of-book sizes and bounded Polymarket CLOB books, with a fallback to
-indicative Gamma prices.
+bounded Kalshi and Polymarket order books, with a fallback to indicative
+Gamma prices. Kalshi books use the public YES/NO bid ladders and derive
+complementary asks; Polymarket books use the public CLOB token books.
 
 The no-order paper/shadow runner is `paper.py`; it journals simulated fills,
 partial-fill residuals, and reconciliation status, and honors the file-based

@@ -77,6 +77,50 @@ class KalshiAdapter(PublicAdapter):
             ))
         return out
 
+    @staticmethod
+    def _book_levels(value: Any) -> list[dict]:
+        out = []
+        for level in value if isinstance(value, list) else []:
+            if not isinstance(level, (list, tuple)) or len(level) < 2:
+                continue
+            price, size = parse_float(level[0]), parse_float(level[1])
+            if price is not None and size is not None and 0 <= price <= 1 and size >= 0:
+                out.append({"price": price, "size": size})
+        return out
+
+    def books(self, markets: List[MarketMetadata], depth: int = 100) -> List[dict]:
+        """Fetch public YES/NO bid ladders and derive complementary asks."""
+        out = []
+        for market in markets:
+            try:
+                payload = self._get(f"/markets/{market.market_id}/orderbook", depth=depth)
+            except requests.RequestException:
+                continue
+            orderbook = payload.get("orderbook_fp", {}) if isinstance(payload, dict) else {}
+            yes_bids = self._book_levels(orderbook.get("yes_dollars"))
+            no_bids = self._book_levels(orderbook.get("no_dollars"))
+            observed = _now()
+
+            def complement(levels):
+                return [{"price": round(1 - row["price"], 10), "size": row["size"]}
+                        for row in reversed(levels)]
+
+            for outcome, bids, asks in (("YES", yes_bids, complement(no_bids)),
+                                        ("NO", no_bids, complement(yes_bids))):
+                bids = sorted(bids, key=lambda row: row["price"], reverse=True)
+                asks = sorted(asks, key=lambda row: row["price"])
+                out.append({
+                    "venue": self.venue, "market_id": market.market_id,
+                    "outcome_id": outcome, "observed_at": observed,
+                    "bids": bids, "asks": asks,
+                    "best_bid": bids[0]["price"] if bids else None,
+                    "best_ask": asks[0]["price"] if asks else None,
+                    "best_bid_size": bids[0]["size"] if bids else None,
+                    "best_ask_size": asks[0]["size"] if asks else None,
+                    "source": "kalshi-orderbook",
+                })
+        return out
+
     def _market(self, item: dict, observed: str) -> MarketMetadata:
         return MarketMetadata(
             venue=self.venue, market_id=str(item.get("ticker")),
@@ -199,7 +243,19 @@ def fetch_public(venues: Iterable[str], limit: int = 1000) -> dict:
         market_rows = adapter.markets(limit)
         observation_rows = adapter.observations(limit)
         books = []
-        if venue == "polymarket":
+        if venue == "kalshi":
+            depth_limit = int(os.getenv("KALSHI_DEPTH_LIMIT", "100"))
+            books = adapter.books(market_rows, depth_limit)
+            best = {(b["market_id"], b["outcome_id"].upper()): b for b in books}
+            observation_rows = [PriceObservation(
+                **{**o.to_dict(),
+                   "bid": best.get((o.market_id, o.outcome_id.upper()), {}).get("best_bid", o.bid),
+                   "ask": best.get((o.market_id, o.outcome_id.upper()), {}).get("best_ask", o.ask),
+                   "bid_size": best.get((o.market_id, o.outcome_id.upper()), {}).get("best_bid_size", o.bid_size),
+                   "ask_size": best.get((o.market_id, o.outcome_id.upper()), {}).get("best_ask_size", o.ask_size),
+                   "source": "kalshi-orderbook" if (o.market_id, o.outcome_id.upper()) in best else o.source}
+            ) for o in observation_rows]
+        elif venue == "polymarket":
             depth_limit = int(os.getenv("POLYMARKET_DEPTH_LIMIT", "100"))
             books = adapter.books(market_rows, depth_limit)
             best = {(b["market_id"], b["outcome_id"].upper()): b for b in books}

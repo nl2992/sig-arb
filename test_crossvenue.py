@@ -98,6 +98,25 @@ class CrossVenueTests(unittest.TestCase):
         self.assertEqual(0.4, books[0]['best_bid'])
         self.assertEqual(12.0, books[0]['best_bid_size'])
 
+    def test_kalshi_orderbook_derives_complementary_asks(self):
+        class FakeKalshi:
+            def get(self, url, *args, **kwargs):
+                class R:
+                    def raise_for_status(self): pass
+                    def json(self):
+                        return {'orderbook_fp': {
+                            'yes_dollars': [['0.40', '12'], ['0.50', '8']],
+                            'no_dollars': [['0.20', '10'], ['0.30', '5']],
+                        }}
+                return R()
+        adapter = KalshiAdapter(session=FakeKalshi())
+        market = adapter._market({'ticker': 'KX1', 'title': 'Q'}, '2026-09-30T00:00:00Z')
+        books = adapter.books([market], depth=100)
+        yes = next(row for row in books if row['outcome_id'] == 'YES')
+        self.assertEqual(0.5, yes['best_bid'])
+        self.assertEqual(0.7, yes['best_ask'])
+        self.assertEqual(5.0, yes['best_ask_size'])
+
     def test_relative_value_is_review_gated_and_reports_z_score(self):
         rows = []
         for i in range(12):
