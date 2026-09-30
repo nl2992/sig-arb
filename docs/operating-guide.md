@@ -21,6 +21,20 @@ labelled in the response: Kalshi provides top-of-book sizes, while the adapter
 fetches bounded Polymarket CLOB books and falls back to Gamma observations when
 a book is unavailable. No cross-venue row is execution-ready by default.
 
+For a no-order paper/shadow run, use the dedicated runner. It journals every
+simulated fill and residual reconciliation, applies the default 5% ROI hurdle,
+and stops immediately when `logs/KILL_SWITCH` exists:
+
+```bash
+SIG_COOKIE='...' PYTHONPATH=. python3 paper.py --interval 60
+PYTHONPATH=. python3 paper.py --replay fixtures/sample_snapshot.json --once
+touch logs/KILL_SWITCH   # stop new paper cycles
+rm logs/KILL_SWITCH       # resume after review
+```
+
+Paper output is written to `logs/paper-runs.jsonl`. `orders_sent` must remain
+zero in this stage.
+
 ## During the operating window
 
 - Treat the dashboard as an evidence surface, not an execution authorization.

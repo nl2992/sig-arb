@@ -214,3 +214,7 @@ liquidity, and execution-risk fields; `execution_ready` remains false until
 the relevant gates are independently verified. Public venue ingestion includes
 Kalshi top-of-book sizes and bounded Polymarket CLOB books, with a fallback to
 indicative Gamma prices.
+
+The no-order paper/shadow runner is `paper.py`; it journals simulated fills,
+partial-fill residuals, and reconciliation status, and honors the file-based
+kill switch at `logs/KILL_SWITCH`.
