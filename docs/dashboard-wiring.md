@@ -104,6 +104,33 @@ The original plan for this step follows.
 
 ### `gates.py`: the single gate list
 
+**Status: done (step 2).** `gates.py` evaluates all 13 gates at system scope
+or for one candidate. Any gate it cannot evaluate fails, and gates that need
+an opportunity report `pass: null` at system scope, which callers must treat
+as not passing. `load_limits` validates `config/risk_limits.json` and
+refuses `auto_hedge: true`. `gate_hash` covers `(id, pass)` only, so live
+quote ages do not count as drift.
+
+`GET /api/status` (`dashboard.build_status`) reads only caches and local
+files, never the network. It returns:
+
+- health and data mode (live or replay), the execution mode, and the last
+  good snapshot;
+- kill switch state from `logs/KILL_SWITCH`;
+- SIG auth: session and `PLACE_PAYLOAD_CONFIRMED`;
+- a read-only probe of `levels.sqlite3`;
+- ages of the 4 feeds;
+- active news breakers and the loaded limits;
+- the gates, their summary and their hash.
+
+`web/status.js` renders the ops strip and the gate panel. Reconciliation is
+read from `logs/reconciliation.json`, which step 5 must write as
+`{"status": "RECONCILED" | "MISMATCH", "as_of": ...}`. The execution mode is
+`Source.mode` and is fixed to `research` until a mode endpoint exists.
+Tests: `test_gates.py`, `test_status.py`.
+
+The original plan follows.
+
 This is one function that everything calls: the dashboard, the ticket and
 the confirm endpoint.
 
@@ -117,7 +144,7 @@ def evaluate(ticket_or_opportunity, system) -> list[dict]:
     """Return [{id, pass, detail, at}] for all 13 gates, in this order."""
 
 def gate_hash(gates) -> str:
-    """sha256 of the (id, pass, detail) tuples; used to detect drift."""
+    """sha256 of the (id, pass) pairs; changes only when a gate flips."""
 ```
 
 Where each gate comes from in the existing code:

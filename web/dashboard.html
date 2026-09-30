@@ -2,6 +2,11 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SIG | Arbitrage Monitor</title><link rel="stylesheet" href="/dashboard.css"></head>
 <body>
 <header><div class="brand">SIG<span> / </span>ARBITRAGE</div><div class="header-right"><span id="status">Connecting</span><button id="refresh" title="Refresh market data" aria-label="Refresh market data">&#8635;</button></div></header>
+<section id="ops" class="ops" aria-label="System status" aria-live="polite">
+<div class="ops-strip"><div><span>System</span><b id="opsHealth" class="badge warn">Loading</b></div><div><span>Last good SIG snapshot</span><b id="opsSnapshot">—</b></div><div><span>Database</span><b id="opsDb" class="badge warn">—</b></div><div><span>SIG auth</span><b id="opsAuth" class="badge warn">—</b> <b id="opsPayload" class="badge warn">—</b></div><div><span>Kill switch</span><b id="opsKill" class="badge warn">—</b></div><div><span>Mode</span><b id="opsMode" class="badge warn">—</b></div><div><span>Live gates</span><b id="opsGateCount" class="badge bad">—</b></div></div>
+<p id="opsReasons" class="ops-reasons" hidden></p>
+<details class="ops-gates"><summary>Live execution gates <span id="opsGateSummary"></span></summary><div id="opsGates" class="gate-grid"></div><div id="opsFeeds" class="gate-grid"></div></details>
+</section>
 <main><div class="heading"><div><p class="eyebrow">MARKET MONITOR</p><h1>Order-book opportunities</h1></div><div class="stamp"><span id="time">Awaiting first snapshot</span><label><input type="checkbox" id="auto" checked> Auto-refresh</label></div></div>
 <div id="error" role="alert" hidden></div>
 <p class="model-note">Live browser relay: run <code>browser_relay.js</code> in the signed-in SIG market page console to stream browser-authenticated books here every 15 seconds.</p>
@@ -21,4 +26,4 @@
 <div id="news" aria-live="polite">Select a market to inspect its source context.</div>
 <p class="model-note">Conditional on your forecast, current depth and the fee filter. No existing positions or cross-race correlations included. News probabilities are not inferred automatically.</p></section>
 <footer><span id="scope">Checking eligible races</span><span>Indicative order-book estimates. Trading availability is not verified by the scanner. Fees default to zero. Values in SUSQies.</span></footer>
-</main><script src="/dashboard.js"></script></body></html>
+</main><script src="/dashboard.js"></script><script src="/status.js"></script></body></html>

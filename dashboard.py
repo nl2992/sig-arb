@@ -6,6 +6,7 @@ import json
 import math
 import os
 import secrets
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,9 +25,19 @@ from movement_scanner import scan_movements
 from relative_value import scan_pairs
 from portfolio import fetch_sig_portfolio
 from news_guard import active_breakers
+import gates
+import sig_client
+from paper import snapshot_age_seconds
 
 ROOT = Path(__file__).parent
 NEWS_BREAKERS = ROOT / 'config' / 'news_circuit_breakers.json'
+KILL_SWITCH = ROOT / 'logs' / 'KILL_SWITCH'
+LEVELS_DB = ROOT / 'logs' / 'levels.sqlite3'
+RISK_LIMITS = ROOT / 'config' / 'risk_limits.json'
+# Written by the reconciliation step; absent means reconciliation has not run.
+RECONCILIATION = ROOT / 'logs' / 'reconciliation.json'
+# Expected refresh cadence per feed in seconds; a feed is stale after twice this.
+FEED_CADENCE_S = {'sig_books': 15, 'sig_account': 60, 'crossvenue': 60, 'levels_db': 60}
 RELAY_PATH = '/api/browser_snapshot'
 # browser_relay.js runs in the signed-in SIG page; it is the only cross-origin caller.
 RELAY_ORIGIN = 'https://sig.thesuper.market'
@@ -220,6 +231,25 @@ class Source:
         self.crossvenue_fetched = 0
         self.portfolio_cache = None
         self.portfolio_fetched = 0
+        # Execution mode is server state; there is no endpoint to change it yet.
+        self.mode = 'research'
+        self.kill_switch_path = KILL_SWITCH
+        self.levels_db_path = LEVELS_DB
+        self.risk_limits_path = RISK_LIMITS
+        self.reconciliation_path = RECONCILIATION
+        self.news_breakers_path = NEWS_BREAKERS
+
+    def status_inputs(self):
+        """Cached state only; never triggers a network fetch."""
+        now = time.monotonic()
+        with self.lock:
+            snapshot = self.snapshot
+            portfolio = self.portfolio_cache
+            portfolio_age = now - self.portfolio_fetched if portfolio is not None else None
+        with self.crossvenue_lock:
+            crossvenue_age = now - self.crossvenue_fetched if self.crossvenue_cache is not None else None
+        return dict(snapshot=snapshot, portfolio=portfolio, portfolio_age=portfolio_age,
+                    crossvenue_age=crossvenue_age)
 
     def accept_browser_snapshot(self, payload):
         markets = payload.get('markets')
@@ -308,6 +338,109 @@ class Source:
             self.portfolio_cache = data
             self.portfolio_fetched = time.monotonic()
             return data
+
+
+def _iso_age_seconds(value):
+    observed = dt.datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=dt.timezone.utc)
+    return max(0.0, (dt.datetime.now(dt.timezone.utc) - observed).total_seconds())
+
+
+def levels_db_status(path):
+    """Read-only probe of the levels database; levels_daemon.py is the only writer."""
+    path = Path(path)
+    result = {'path': str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),
+              'ok': False, 'last_capture': None, 'age_s': None, 'error': None}
+    if not path.exists():
+        result['error'] = 'not found'
+        return result
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=1)
+        try:
+            last = conn.execute('SELECT MAX(captured_at) FROM captures').fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        result['error'] = str(exc)
+        return result
+    result.update(ok=True, last_capture=last, age_s=_iso_age_seconds(last) if last else None)
+    return result
+
+
+def _feed(name, age, detail):
+    stale = age is None or age > 2 * FEED_CADENCE_S[name]
+    return {'name': name, 'age_s': None if age is None else round(age, 1), 'stale': stale, 'detail': detail}
+
+
+def build_status(source):
+    """System status and the 13 gates at system scope. Reads caches and local files only."""
+    inputs = source.status_inputs()
+    reasons = []
+
+    kill_path = Path(source.kill_switch_path)
+    kill = {'engaged': kill_path.exists(), 'reason': None, 'since': None}
+    if kill['engaged']:
+        try:
+            kill['reason'] = kill_path.read_text()[:500].strip() or None
+            kill['since'] = dt.datetime.fromtimestamp(kill_path.stat().st_mtime, dt.timezone.utc).isoformat(timespec='seconds')
+        except OSError:
+            kill['reason'] = 'kill switch file present but unreadable'
+
+    limits, limits_error = None, None
+    try:
+        limits = gates.load_limits(source.risk_limits_path)
+    except (OSError, ValueError) as exc:
+        limits_error = str(exc)
+        reasons.append('risk limits unavailable')
+
+    breakers, breaker_error = {}, None
+    try:
+        breakers = active_breakers(source.news_breakers_path)
+    except (OSError, ValueError) as exc:
+        breaker_error = str(exc)
+        reasons.append('news circuit-breaker config invalid')
+
+    recon = None
+    try:
+        recon = json.loads(Path(source.reconciliation_path).read_text())
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        recon = {'status': 'UNREADABLE'}
+
+    snapshot = inputs['snapshot']
+    snapshot_age = snapshot_age_seconds(snapshot) if snapshot is not None else None
+    portfolio = inputs['portfolio']
+    session = portfolio.get('status') if portfolio else None
+    db = levels_db_status(source.levels_db_path)
+    data_mode = 'replay' if source.replay else 'live'
+
+    feeds = [
+        _feed('sig_books', snapshot_age, f'snapshot {snapshot.ts}' if snapshot else 'no snapshot yet'),
+        _feed('sig_account', inputs['portfolio_age'], session or 'not fetched yet'),
+        _feed('crossvenue', inputs['crossvenue_age'], 'Kalshi + Polymarket public' if inputs['crossvenue_age'] is not None
+              else 'not fetched yet'),
+        _feed('levels_db', db['age_s'], db['error'] or f"last capture {db['last_capture']}"),
+    ]
+    reasons += [f"{f['name']} stale" for f in feeds if f['stale']]
+
+    system = dict(sig_session=session, payload_verified=sig_client.PLACE_PAYLOAD_CONFIRMED,
+                  kill_switch=kill, recon=recon, mode=source.mode, limits=limits,
+                  limits_error=limits_error, sig_snapshot_age_s=snapshot_age, active_breakers=breakers)
+    gate_list = gates.evaluate(system)
+    health = 'down' if snapshot is None else ('degraded' if reasons else 'ok')
+    return {
+        'as_of': dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'),
+        'health': health, 'health_reasons': reasons, 'data_mode': data_mode, 'mode': source.mode,
+        'last_good_snapshot': snapshot.ts if snapshot else None,
+        'kill_switch': kill,
+        'sig_auth': {'session': session, 'payload_verified': sig_client.PLACE_PAYLOAD_CONFIRMED},
+        'db': db, 'feeds': feeds,
+        'breakers': {'active_markets': sorted(breakers), 'error': breaker_error},
+        'limits': limits, 'limits_error': limits_error,
+        'gates': gate_list, 'gate_summary': gates.summary(gate_list), 'gate_hash': gates.gate_hash(gate_list),
+    }
 
 
 def handler(source, action_token=None, actions=None):
@@ -410,6 +543,11 @@ def handler(source, action_token=None, actions=None):
                     self.send_body(400, json.dumps({"error": str(exc)}).encode(), "application/json")
                 except Exception:
                     self.send_body(502, b'{"error":"Market data unavailable. Retry the scan."}', "application/json")
+            elif url.path == '/api/status':
+                try:
+                    self.send_body(200, json.dumps(build_status(source), allow_nan=False).encode(), 'application/json')
+                except Exception:
+                    self.send_body(500, b'{"error":"Status unavailable."}', 'application/json')
             elif url.path == '/api/crossvenue':
                 try:
                     self.send_body(200, json.dumps(source.get_crossvenue(), allow_nan=False).encode(), 'application/json')
@@ -420,7 +558,7 @@ def handler(source, action_token=None, actions=None):
                     self.send_body(200, json.dumps(source.get_portfolio(), allow_nan=False).encode(), 'application/json')
                 except Exception:
                     self.send_body(502, b'{"error":"Portfolio state unavailable. Retry the reconciliation check."}', 'application/json')
-            elif url.path in ("/", "/dashboard.css", "/dashboard.js"):
+            elif url.path in ("/", "/dashboard.css", "/dashboard.js", "/status.js"):
                 file = "dashboard.html" if url.path == "/" else url.path[1:]
                 mime = {"html": "text/html", "css": "text/css", "js": "application/javascript"}
                 body = (ROOT / "web" / file).read_bytes()
