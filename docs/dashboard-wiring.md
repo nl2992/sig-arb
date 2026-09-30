@@ -63,6 +63,27 @@ there, and move gates, tickets and execution into their own modules
 
 These are needed before any endpoint that changes state.
 
+**Status: done.** Implemented in `dashboard.py` and covered by
+`test_dashboard_security.py`:
+
+- **Host check.** Any request whose `Host` is not `127.0.0.1:<port>` or
+  `localhost:<port>` gets a 403. This blocks DNS rebinding.
+- **Relay CORS.** CORS headers are sent only to `https://sig.thesuper.market`,
+  and only on `/api/browser_snapshot`. Preflight requests from any other
+  origin, or to any other path, get a 403.
+- **Relay origins.** The relay POST accepts no `Origin`, the SIG origin or
+  the dashboard's own origin. Anything else gets a 403.
+- **Action token.** `handler(source, action_token, actions)` generates a
+  token when none is given and puts it in the page as
+  `<meta name="action-token">`. Any path registered in `actions` requires
+  both the dashboard's own origin and a matching `X-Action-Token` header,
+  compared in constant time.
+- **Response headers.** Every response carries `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+  `Vary: Origin`.
+
+The original plan for this step follows.
+
 1. **CORS.** `send_body` sets `Access-Control-Allow-Origin: *` on every
    response. That is acceptable for read-only JSON. It is not acceptable
    once there are POST endpoints for tickets or the kill switch, because

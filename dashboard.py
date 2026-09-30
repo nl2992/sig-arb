@@ -1,9 +1,11 @@
 """Read-only local dashboard. Run: python3 dashboard.py --port 8765."""
 import argparse
 import datetime as dt
+import hmac
 import json
 import math
 import os
+import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,9 @@ from news_guard import active_breakers
 
 ROOT = Path(__file__).parent
 NEWS_BREAKERS = ROOT / 'config' / 'news_circuit_breakers.json'
+RELAY_PATH = '/api/browser_snapshot'
+# browser_relay.js runs in the signed-in SIG page; it is the only cross-origin caller.
+RELAY_ORIGIN = 'https://sig.thesuper.market'
 
 
 def _snapshot_age_seconds(snapshot):
@@ -305,14 +310,58 @@ class Source:
             return data
 
 
-def handler(source):
+def handler(source, action_token=None, actions=None):
+    """Build the request handler.
+
+    `actions` maps a POST path to a callable taking the handler. Every action
+    requires this dashboard's own origin and `action_token`, which is served
+    only inside the same-origin page.
+    """
+    action_token = action_token or secrets.token_urlsafe(32)
+    actions = dict(actions or {})
+
     class Handler(BaseHTTPRequestHandler):
+        def local_hosts(self):
+            port = self.server.server_address[1]
+            return {f'127.0.0.1:{port}', f'localhost:{port}'}
+
+        def host_ok(self):
+            # A foreign hostname resolving to 127.0.0.1 (DNS rebinding) is refused.
+            return self.headers.get('Host', '') in self.local_hosts()
+
+        def local_origin(self):
+            return self.headers.get('Origin') in {f'http://{h}' for h in self.local_hosts()}
+
+        def relay_cors(self):
+            return urlparse(self.path).path == RELAY_PATH and self.headers.get('Origin') == RELAY_ORIGIN
+
+        def refuse(self, message):
+            self.send_body(403, json.dumps({'error': message}).encode(), 'application/json')
+
         def do_OPTIONS(self):
-            self.send_body(204, b'', 'text/plain')
+            if self.host_ok() and self.relay_cors():
+                self.send_body(204, b'', 'text/plain')
+            else:
+                self.refuse('Cross-origin requests are not allowed.')
 
         def do_POST(self):
-            if urlparse(self.path).path != '/api/browser_snapshot':
+            if not self.host_ok():
+                self.refuse('Unknown host.')
+                return
+            path = urlparse(self.path).path
+            if path in actions:
+                token = self.headers.get('X-Action-Token', '')
+                if not (self.local_origin() and hmac.compare_digest(token, action_token)):
+                    self.refuse('Action requires the dashboard origin and action token.')
+                    return
+                actions[path](self)
+                return
+            if path != RELAY_PATH:
                 self.send_body(404, b'Not found', 'text/plain')
+                return
+            origin = self.headers.get('Origin')
+            if origin is not None and origin != RELAY_ORIGIN and not self.local_origin():
+                self.refuse('Snapshots are accepted only from the SIG site or this dashboard.')
                 return
             try:
                 length = int(self.headers.get('Content-Length', '0'))
@@ -324,6 +373,9 @@ def handler(source):
                 self.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
 
         def do_GET(self):
+            if not self.host_ok():
+                self.refuse('Unknown host.')
+                return
             url = urlparse(self.path)
             if url.path in ("/api/signals", "/api/kelly", "/api/news"):
                 try:
@@ -371,7 +423,11 @@ def handler(source):
             elif url.path in ("/", "/dashboard.css", "/dashboard.js"):
                 file = "dashboard.html" if url.path == "/" else url.path[1:]
                 mime = {"html": "text/html", "css": "text/css", "js": "application/javascript"}
-                self.send_body(200, (ROOT / "web" / file).read_bytes(), mime[file.split(".")[-1]])
+                body = (ROOT / "web" / file).read_bytes()
+                if file == "dashboard.html":
+                    meta = f'<meta name="action-token" content="{action_token}"></head>'
+                    body = body.replace(b"</head>", meta.encode(), 1)
+                self.send_body(200, body, mime[file.split(".")[-1]])
             else:
                 self.send_body(404, b"Not found", "text/plain")
 
@@ -380,8 +436,14 @@ def handler(source):
             self.send_header("Content-Type", mime + "; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Vary", "Origin")
+            if self.relay_cors():
+                self.send_header("Access-Control-Allow-Origin", RELAY_ORIGIN)
+                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
             self.wfile.write(body)
 
