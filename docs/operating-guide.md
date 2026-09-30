@@ -22,6 +22,18 @@ those inputs pass completely. Bounded venue runs are useful for testing but do
 not establish readiness. It reports paper readiness separately from the
 blocked live-execution gate.
 
+For a one-shot raw levels capture of the SIG-linked Kalshi and Polymarket
+markets, save a targeted public snapshot:
+
+```bash
+PYTHONPATH=. python3 crossvenue.py fetch-public --targeted \
+  --out logs/crossvenue-targeted-$(date -u +%Y%m%dT%H%M%SZ).json
+```
+
+The file contains native market metadata, observations, order-book ladders,
+timestamps, and explicit missing-market/book coverage. It is read-only and
+does not place orders.
+
 The dashboard shows SIG signals, venue coverage, mapped/approved counts,
 movement candidates, and relative-value diagnostics. `/api/crossvenue` exposes
 the raw public inventory for inspection. Public venue depth is explicitly

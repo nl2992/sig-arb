@@ -131,6 +131,8 @@ def main(argv=None):
     fetch = sub.add_parser("fetch-public")
     fetch.add_argument("--venues", nargs="+", default=["kalshi", "polymarket"])
     fetch.add_argument("--limit", type=int, default=1000)
+    fetch.add_argument("--targeted", action="store_true",
+                       help="use native IDs from docs/market-links.csv")
     fetch.add_argument("--out", required=True)
     scan = sub.add_parser("scan")
     scan.add_argument("--snapshot", required=True)
@@ -161,7 +163,8 @@ def main(argv=None):
     live.add_argument("--max-qty", type=float, default=None)
     args = ap.parse_args(argv)
     if args.command == "fetch-public":
-        payload = fetch_public(args.venues, args.limit)
+        market_ids = load_targeted_market_ids(ROOT / "docs/market-links.csv") if args.targeted else None
+        payload = fetch_public(args.venues, args.limit, market_ids=market_ids)
         pathlib.Path(args.out).write_text(json.dumps(payload, indent=2))
         print(json.dumps({v: {k: len(rows) for k, rows in payload[v].items()} for v in payload}, indent=2))
         return

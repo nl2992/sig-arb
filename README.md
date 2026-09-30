@@ -180,6 +180,10 @@ Fetch a public inventory snapshot:
 ```bash
 python3 crossvenue.py fetch-public --venues kalshi polymarket --limit 1000 \
   --out /tmp/crossvenue-public.json
+
+# Capture current books for the fixed SIG-linked venue IDs
+PYTHONPATH=. python3 crossvenue.py fetch-public --targeted \
+  --out logs/crossvenue-targeted-$(date -u +%Y%m%dT%H%M%SZ).json
 ```
 
 Offline movement analysis uses a SIG snapshot, timestamped reference
