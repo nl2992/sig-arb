@@ -48,6 +48,11 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertTrue(all(r['capital'] <= 100 for r in rows))
 
+    def test_below_hurdle_is_retained_as_punt(self):
+        data = report(self.snapshot, {})
+        self.assertEqual(data['signals'], [])
+        self.assertTrue({r['race'] for r in data['punts']} >= {'Delaware Senate', 'Synthetic Senate'})
+
     def test_buy_yes_requires_exhaustive_allowlist(self):
         with patch('dashboard.load_exhaustive', return_value=set()):
             self.assertTrue(all(r['direction'] == 'SELL_ALL' for r in report(self.snapshot, {'roi': ['0']})['signals']))

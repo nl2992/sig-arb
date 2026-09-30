@@ -41,11 +41,10 @@ def report(snapshot, params):
                    min_edge=edge, cash=budget or None)
     titles = {m["id"]: m["title"] for m in snapshot.markets}
     rows = []
+    punts = []
     for r in results:
-        if r.pnl < minimum or r.roi + 1e-12 < min_roi:
-            continue
         no = r.direction == "SELL_ALL"
-        rows.append(dict(
+        row = dict(
             race=r.race, direction=r.direction, qty=r.qty, profit=r.pnl,
             capital=r.capital, roi=r.roi, edge=r.avg_edge,
             top_edge=r.top_edge, marginal_edge=r.marginal_edge,
@@ -54,7 +53,12 @@ def report(snapshot, params):
             legs=[dict(id=l.market_id, title=titles[l.market_id],
                        side="BUY NO" if no else "BUY YES", qty=l.qty,
                        vwap=1-l.vwap if no else l.vwap,
-                       limit=1-l.limit if no else l.limit) for l in r.legs]))
+                       limit=1-l.limit if no else l.limit) for l in r.legs])
+        if r.pnl >= minimum and r.roi + 1e-12 >= min_roi:
+            rows.append(row)
+        elif r.pnl >= minimum:
+            row["required_roi"] = min_roi
+            punts.append(row)
     near = []
     for race, legs in groups.items():
         if len(legs) < 2 or any(mid not in books for mid in legs.values()):
@@ -72,6 +76,7 @@ def report(snapshot, params):
                 exhaustive=len(exhaustive), fee=fee, budget=budget,
                 overall_capital=overall, cap_pct=cap_pct,
                 signals=rows, near=near[:12],
+                punts=punts[:25],
                 markets_list=[dict(id=m['id'], title=m['title']) for m in snapshot.markets])
 
 
