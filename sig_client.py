@@ -49,7 +49,7 @@ def load_env(path: str | os.PathLike = None) -> None:
 
 class Client:
     def __init__(self, cookie: str | None = None, tournament: str | None = None,
-                 concurrency: int = 8, timeout: float = 10):
+                 concurrency: int = 8, timeout: float = 20):
         load_env()
         self.cookie = cookie or os.environ.get("SIG_COOKIE", "")
         self.tournament = tournament or os.environ.get("SIG_TOURNAMENT", DEFAULT_TOURNAMENT)
@@ -70,7 +70,11 @@ class Client:
 
     # ---------------------------------------------------------------- http
     def _get(self, path: str, **params):
-        r = self.s.get(BASE + path, params=params, timeout=self.timeout)
+        # Reads are idempotent: retry once, since SIG's API sometimes stalls for 10s+.
+        try:
+            r = self.s.get(BASE + path, params=params, timeout=self.timeout)
+        except (requests.Timeout, requests.ConnectionError):
+            r = self.s.get(BASE + path, params=params, timeout=self.timeout)
         if r.status_code in (401, 403):
             raise PermissionError(f"{path} -> {r.status_code}. Is SIG_COOKIE set / still valid?")
         r.raise_for_status()
