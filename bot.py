@@ -32,7 +32,8 @@ import pathlib
 import time
 import uuid
 
-from arb_engine import ArbResult, breakeven_limit
+from arb_engine import ArbResult, Book, breakeven_limit
+import fair_value
 import fast_scan
 import gates
 import sig_client
@@ -252,6 +253,61 @@ def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
                             "capital": r.capital, "result": res}) + "\n")
 
 
+def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool) -> dict:
+    """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like)."""
+    out = {"fv_signals": 0, "fv_orders": 0, "fv_skipped": 0}
+    for m in snap.markets:
+        book = Book.from_levels(m["id"], snap.levels[m["id"]])
+        plan = fair_value.plan_market(book, refs.fair(m["id"]), ledger, threshold=a.fv_threshold,
+                                      exit_band=a.fv_exit, max_per_market=a.fv_max_market,
+                                      gross_left=a.fv_max_gross - ledger.gross())
+        if not plan:
+            continue
+        out["fv_signals"] += 1
+        kind = "EXIT" if plan.get("exit") else "ENTRY"
+        desc = (f"FV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} "
+                f"@ {plan['limit']} (fair {plan['fair']}" + (f", edge {plan['edge']}" if 'edge' in plan else "") + ")")
+        if kill_switch_engaged():
+            log.info("kill switch engaged; not sending %s", desc)
+            out["fv_skipped"] += 1
+            continue
+        if a.mode == "signal":
+            print(desc)
+            continue
+        if a.mode == "confirm" and input(f"{desc} {'LIVE' if live else 'DRY RUN'}? [y/N] ").strip().lower() != "y":
+            out["fv_skipped"] += 1
+            continue
+        coid = f"fv:{uuid.uuid4().hex[:12]}"
+        try:
+            holding = fair_value.net_holding(cli, m["id"]) if live else 0.0
+            resp = cli.place(m["id"], book.exchange_id, plan["yes_side"], plan["limit"], plan["qty"],
+                             holdings=holding, dry_run=not live, client_order_id=coid)
+        except Exception as e:
+            log.error("fv order failed on #%s: %s", m["id"], e)
+            out["fv_skipped"] += 1
+            continue
+        fq, fp, oids = _fill_of(resp, plan["qty"], plan["limit"])
+        if fq < plan["qty"]:
+            for oid in oids:
+                cli.cancel(oid, dry_run=not live)
+        if live and fq > 0:
+            ledger.record(m["id"], plan["yes_side"], fq, plan["limit"])
+        status = "UNKNOWN" if resp.get("_unknown") else ("DONE" if fq >= plan["qty"] else "PARTIAL" if fq else "MISS")
+        res = {"status": status, "strategy": "fv", "kind": kind, "market": m["id"], "plan": plan,
+               "filled": fq, "client_order_id": coid, "dryRun": bool(resp.get("dryRun"))}
+        EXEC_LOG.parent.mkdir(exist_ok=True)
+        with EXEC_LOG.open("a") as f:
+            f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": a.mode, "live": live,
+                                "race": m["title"], "dir": f"FV_{kind}", "qty": plan["qty"],
+                                "pnl": plan.get("expected_pnl", 0.0), "capital": plan.get("capital", 0.0),
+                                "result": res}) + "\n")
+        out["fv_orders"] += 1
+        log.info("%s -> %s filled %g", desc, status, fq)
+        if live and status == "UNKNOWN":
+            engage_kill_switch(f"UNKNOWN fair-value order on #{m['id']} ({coid}): reconcile before retrying")
+    return out
+
+
 # ---------------------------------------------------------- limits / status
 def apply_limits(a, limits: dict):
     """Tighten CLI caps to config/risk_limits.json; the file always wins when stricter."""
@@ -336,6 +392,13 @@ def main():
     ap.add_argument("--sequential", action="store_true",
                     help="send legs one after another (thinnest first) instead of all at once")
     ap.add_argument("--balance-every", type=float, default=60, help="sec between balance refreshes")
+    ap.add_argument("--strategy", default="arb",
+                    help="comma list: arb (complete-set arbs), fv (trade toward Kalshi/Polymarket fair value)")
+    ap.add_argument("--fv-threshold", type=float, default=0.03, help="fv: enter when SIG is this far past fair")
+    ap.add_argument("--fv-exit", type=float, default=0.01, help="fv: close once SIG is within this of fair")
+    ap.add_argument("--fv-max-market", type=float, default=500, help="fv: capital cap per market")
+    ap.add_argument("--fv-max-gross", type=float, default=5000, help="fv: total capital cap")
+    ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
@@ -354,6 +417,16 @@ def main():
     log.info("mode=%s live=%s markets=%d max_gross=%g max_per_race=%g min_edge=%g",
              a.mode, a.live, len(markets), a.max_gross, a.max_per_race, a.min_edge)
 
+    strategies = {x.strip() for x in a.strategy.split(",") if x.strip()}
+    if not strategies <= {"arb", "fv"}:
+        raise SystemExit(f"unknown --strategy {a.strategy}")
+    refs = ledger = None
+    if "fv" in strategies:
+        refs, ledger = fair_value.ReferencePrices(), fair_value.Ledger()
+        log.info("fv: %d approved reference mappings; first refresh...", len(refs.matches))
+        refs.refresh()
+        refs.start(a.ref_interval)
+        a.fv_max_gross = min(a.fv_max_gross, limits["venue_exposure"].get("sig", a.fv_max_gross))
     balance, balance_at = None, 0.0
     book_cache = {}
     while True:
@@ -382,6 +455,12 @@ def main():
             for race, snap in scanner.stream(full=full_sweep, stats=scan):
                 for m in snap.markets:
                     book_cache[m["id"]] = (m, snap.levels[m["id"]], snap.ts)
+                if "fv" in strategies:
+                    fv_counts = run_fair_value(cli, snap, refs, ledger, a, live)
+                    for k, v in fv_counts.items():
+                        counts[k] = counts.get(k, 0) + v
+                if "arb" not in strategies:
+                    continue
                 sigs, near, titles = generate(snap, a, exhaustive, budget)
                 fresh = [s for s in sigs if sig_key(s) not in seen]
                 seen = {k for k in seen if k[0] != race} | {sig_key(s) for s in sigs}
@@ -438,7 +517,10 @@ def main():
                      interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
                      max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
                      last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left(),
-                     scan=scan)
+                     scan=scan, strategies=sorted(strategies),
+                     fv=None if ledger is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
+                                                     "positions": sum(1 for r in ledger.rows.values() if r.get("qty")),
+                                                     "references": refs.last_refresh})
         time.sleep(max(0.0, a.interval - (time.time() - t0)))
 
 

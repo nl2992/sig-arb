@@ -1,4 +1,6 @@
+import pathlib
 import unittest
+from unittest import mock
 import json
 from unittest.mock import patch
 
@@ -73,7 +75,8 @@ class DashboardTests(unittest.TestCase):
             'kalshi': {'markets': [{'ticker': 'KX1'}], 'observations': []},
             'polymarket': {'markets': [{'id': 'P1'}], 'observations': []},
         }
-        data = report(self.snapshot, {'roi': ['0']}, payload)
+        with mock.patch('dashboard.MATCHES', pathlib.Path('fixtures/crossvenue/matches.json')):
+            data = report(self.snapshot, {'roi': ['0']}, payload)
         self.assertEqual({'kalshi': 1, 'polymarket': 1}, data['crossvenue']['market_counts'])
         self.assertEqual(237, data['crossvenue']['mapping_counts']['discovered'])
         self.assertEqual(0, data['crossvenue']['mapping_counts']['approved'])

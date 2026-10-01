@@ -41,6 +41,7 @@ RISK_LIMITS = ROOT / 'config' / 'risk_limits.json'
 RECONCILIATION = ROOT / 'logs' / 'reconciliation.json'
 # Written by bot.py: one heartbeat file and an append-only execution journal.
 BOT_STATUS = ROOT / 'logs' / 'bot_status.json'
+MATCHES = ROOT / 'config' / 'market_matches.json'
 BOT_BOOKS = ROOT / 'logs' / 'bot_books.json'
 EXEC_LOG = ROOT / 'logs' / 'executions.jsonl'
 AUDIT_LOG = ROOT / 'logs' / 'audit.jsonl'
@@ -71,8 +72,9 @@ def _read_history(path=ROOT / 'logs' / 'crossvenue-history.jsonl'):
     return rows
 
 
-def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'config/market_matches.json'):
+def _crossvenue_report(snapshot, payload, matches_path=None):
     payload = payload or {}
+    matches_path = matches_path or MATCHES
     observations = [PriceObservation(**row)
                     for venue in payload.values()
                     for row in venue.get('observations', [])]

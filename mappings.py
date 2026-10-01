@@ -196,9 +196,9 @@ def main(argv=None):
     pending = [r for r in rows if r["status"] == "REVIEW_REQUIRED"]
     if a.cmd == "approve-passing":
         ok = [r for r in pending if all_pass(r)]
-        flagged = sum(bool(r.get("flags")) for r in ok)
+        flagged = sum(any(not f.startswith("closes ") for f in r.get("flags") or []) for r in ok)
         print(f"{len(ok)} of {len(pending)} pending rows pass every automated check "
-              f"({flagged} carry settlement flags, recorded in their evidence).")
+              f"({flagged} carry settlement-rule flags, recorded in their evidence).")
         if not ok or input("Approve them all? [y/N] ").strip().lower() != "y":
             print("nothing approved")
             return 0
