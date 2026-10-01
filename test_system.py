@@ -1,5 +1,5 @@
 """Offline end-to-end tests: signals live-path + bot execution with a fake client."""
-import json, pathlib, sys
+import json, pathlib, sys, tempfile
 import sig_client, signals, bot
 from signals import Snapshot, generate
 FIX = pathlib.Path(__file__).with_name("fixtures") / "sample_snapshot.json"
@@ -11,7 +11,7 @@ class Fake:
     def all_levels(self, ids): return {i: snap.levels[i] for i in ids}
     def balance(self): return 100_000
     def quote(self, *a): self.calls.append(("quote",) + a); return {}
-    def place(self, mid, ex, side, px, q, dry_run=True):
+    def place(self, mid, ex, side, px, q, dry_run=True, client_order_id=None):
         self.calls.append(("place", mid, side, px, q))
         return {"orderId": f"o{mid}", "filledQuantity": q if mid != 902 else q * 0.5, "avgPrice": px}
     def cancel(self, oid, dry_run=True): self.calls.append(("cancel", oid))
@@ -30,18 +30,19 @@ assert (signals.HERE / "logs" / "signals.csv").exists()
 # 3) execution: thinnest-first, leg 2 partial -> target shrinks, cancel residual
 sigs, _, _ = generate(snap, A, set(), budget=None)
 syn = [s for s in sigs if s.race == "Synthetic Senate"][0]
-f = Fake(); res = bot.execute(f, syn, live=True)
+NO_KILL = pathlib.Path(tempfile.mkdtemp()) / "KILL_SWITCH"
+f = Fake(); res = bot.execute(f, syn, live=True, kill_switch=NO_KILL)
 print(json.dumps(res, indent=1)); print(f.calls)
 assert res["status"] == "IMBALANCED" and res["qty"] == 350 and res["residual"] == {901: 350.0}
 class Full(Fake):
-    def place(self, mid, ex, side, px, q, dry_run=True): return {"orderId": "x", "filledQuantity": q, "avgPrice": px}
-assert bot.execute(Full(), syn, live=True)["status"] == "DONE"
+    def place(self, mid, ex, side, px, q, dry_run=True, client_order_id=None): return {"orderId": "x", "filledQuantity": q, "avgPrice": px}
+assert bot.execute(Full(), syn, live=True, kill_switch=NO_KILL)["status"] == "DONE"
 assert ("cancel", "o902") in f.calls
 
 # 4) leg-1 miss -> MISS, leg-2 miss -> LEGGED
 class Miss(Fake):
-    def place(self, mid, ex, side, px, q, dry_run=True): return {"orderId": "x", "filledQuantity": 0}
-assert bot.execute(Miss(), syn, live=True)["status"] == "MISS"
+    def place(self, mid, ex, side, px, q, dry_run=True, client_order_id=None): return {"orderId": "x", "filledQuantity": 0}
+assert bot.execute(Miss(), syn, live=True, kill_switch=NO_KILL)["status"] == "MISS"
 # 5) risk gate cooldown / gross cap
 class Args: min_edge=0.005; min_edge_3leg=0.01; max_gross=900; cooldown=30
 rk = bot.Risk(Args)

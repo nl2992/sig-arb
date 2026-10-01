@@ -7,6 +7,12 @@
 <p id="opsReasons" class="ops-reasons" hidden></p>
 <details class="ops-gates"><summary>Live execution gates <span id="opsGateSummary"></span></summary><div id="opsGates" class="gate-grid"></div><div id="opsFeeds" class="gate-grid"></div></details>
 </section>
+<section id="execution" class="ops exec" aria-label="Automated execution" aria-live="polite">
+<div class="section-title"><h2>Automated execution</h2><span>bot.py sends orders; this panel shows its state and holds the kill switch</span></div>
+<div class="ops-strip"><div><span>Bot</span><b id="botState" class="badge warn">—</b></div><div><span>Orders</span><b id="botLive" class="badge warn">—</b></div><div><span>Gross used / cap</span><b id="botGross">—</b></div><div><span>Per-race cap · min edge</span><b id="botCaps">—</b></div><div><span>Signals / executed / skipped</span><b id="botCounts">—</b></div><div><span>Kill switch</span><b id="execKill" class="badge warn">—</b> <button type="button" id="killEngage" class="danger">Engage kill switch</button> <button type="button" id="killRelease">Release…</button></div></div>
+<p id="botBlockers" class="ops-reasons" hidden></p>
+<details class="ops-gates" open><summary>Execution tape <span id="execCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Time</th><th>Race</th><th>Dir</th><th>Mode</th><th>Status</th><th>Qty</th><th>PnL</th><th>Legs</th></tr></thead><tbody id="execRows"><tr><td colspan="8" class="empty">No executions journaled yet.</td></tr></tbody></table></div></details>
+</section>
 <main><div class="heading"><div><p class="eyebrow">MARKET MONITOR</p><h1>Order-book opportunities</h1></div><div class="stamp"><span id="time">Awaiting first snapshot</span><label><input type="checkbox" id="auto" checked> Auto-refresh</label></div></div>
 <div id="error" role="alert" hidden></div>
 <p class="model-note">Live browser relay: run <code>browser_relay.js</code> in the signed-in SIG market page console to stream browser-authenticated books here every 15 seconds.</p>
@@ -28,4 +34,4 @@
 <div id="news" aria-live="polite">Select a market to inspect its source context.</div>
 <p class="model-note">Conditional on your forecast, current depth and the fee filter. No existing positions or cross-race correlations included. News probabilities are not inferred automatically.</p></section>
 <footer><span id="scope">Checking eligible races</span><span>Indicative order-book estimates. Trading availability is not verified by the scanner. Fees default to zero. Values in SUSQies.</span></footer>
-</main><script src="/dashboard.js"></script><script src="/status.js"></script><script type="module" src="/js/opportunities.js"></script></body></html>
+</main><script src="/dashboard.js"></script><script src="/status.js"></script><script type="module" src="/js/opportunities.js"></script><script type="module" src="/js/execution.js"></script></body></html>

@@ -11,9 +11,12 @@ Never commit .env.
 """
 from __future__ import annotations
 
+import base64
+import datetime as dt
 import json
 import os
 import pathlib
+import urllib.parse
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List
@@ -25,9 +28,10 @@ from arb_engine import Book
 BASE = "https://sig.thesuper.market"
 DEFAULT_TOURNAMENT = "bda92870-621e-47b0-bc3c-3602c5c26f55"
 
-# Flip to True only after you have captured ONE real order in DevTools
-# (Network tab -> /api/trading/orders/place -> Payload) and checked that
-# `place()` below sends the same fields.
+# The payload below matches the site's own order builder (read from the JS bundle
+# with dump_order_logic_console.js, 1 Oct). Flip to True only after ONE tiny live
+# order placed by hand with DevTools open shows the same /api/trading/orders/place
+# payload, and _fill_of() in bot.py reads the real fill fields. See README §3.
 PLACE_PAYLOAD_CONFIRMED = False
 
 
@@ -54,6 +58,9 @@ class Client:
         self.s.headers.update({"Content-Type": "application/json", "User-Agent": "sig-arb/0.2"})
         if self.cookie:
             self.s.headers["Cookie"] = self.cookie
+        sess = decode_supabase_cookie(self.cookie) if self.cookie else {}
+        self.access_token = os.environ.get("SIG_ACCESS_TOKEN") or sess.get("access_token")
+        self.profile_id = os.environ.get("SIG_PROFILE_ID") or (sess.get("user") or {}).get("id")
 
     # ---------------------------------------------------------------- http
     def _get(self, path: str, **params):
@@ -82,10 +89,12 @@ class Client:
             off = j.get("nextOffset") if j["markets"] else None
         return out
 
+    def book_raw(self, market_id: int) -> dict:
+        return self._get(f"/api/markets/{market_id}/orders", marketId=market_id,
+                         tournamentId=self.tournament)
+
     def levels(self, market_id: int) -> List[dict]:
-        j = self._get(f"/api/markets/{market_id}/orders", marketId=market_id,
-                      tournamentId=self.tournament)
-        return j["levels"]
+        return levels_from_response(self.book_raw(market_id))
 
     def all_levels(self, ids: List[int]) -> Dict[int, List[dict]]:
         with ThreadPoolExecutor(self.concurrency) as ex:
@@ -105,9 +114,10 @@ class Client:
         return None
 
     def my_orders(self, market_id: int) -> List[dict]:
-        j = self._get(f"/api/markets/{market_id}/orders", marketId=market_id,
-                      tournamentId=self.tournament)
-        return j.get("myOrders", [])
+        j = self.book_raw(market_id)
+        if "myOrders" in j:
+            return j["myOrders"] or []
+        return [o for b in j.get("books", []) for o in (b.get("myOrders") or [])]
 
     def holdings(self, market_id: int) -> list:
         j = self._get(f"/api/markets/{market_id}/live", tournamentId=self.tournament)
@@ -115,23 +125,137 @@ class Client:
 
     # --------------------------------------------------------------- trade
     def quote(self, exchange_id: int, order_type: str, price: float, qty: float) -> dict:
+        """Collateral/linkage preview (NOT a fill estimate). Cookie auth."""
         return self._post("/api/trading/orders/quote", {
             "exchangeId": exchange_id, "orderType": order_type,
             "priceLimit": round(price, 4), "quantity": qty, "tournamentId": self.tournament})
 
-    def place(self, market_id: int, exchange_id: int, order_type: str,
-              price: float, qty: float, dry_run: bool = True) -> dict:
-        """order_type BUY/SELL in YES terms (SELL YES == buy NO at 1-price).
-        Payload inferred from the web client — see PLACE_PAYLOAD_CONFIRMED."""
-        body = {"marketId": market_id, "exchangeId": exchange_id, "orderType": order_type,
-                "priceLimit": round(price, 4), "quantity": qty, "isLimitOrder": True,
-                "tournamentId": self.tournament, "idempotencyKey": str(uuid.uuid4())}
+    def place_raw(self, exchange_id: int, order_type: str, price_limit: float, quantity: float,
+                  dry_run: bool = True, idempotency_key: str | None = None) -> dict:
+        """Exactly what the site sends. quantity: +YES / -NO (shares).
+        price_limit is in the terms of the side traded (NO orders: NO price)."""
+        body = {"createdAt": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z"),
+                "exchangeId": int(exchange_id), "profileId": self.profile_id,
+                "orderType": order_type, "priceLimit": round(float(price_limit), 4),
+                "quantity": int(quantity), "open": True, "tournamentId": self.tournament,
+                "idempotencyKey": idempotency_key or str(uuid.uuid4())}
         if dry_run or not PLACE_PAYLOAD_CONFIRMED:
             return {"dryRun": True, "body": body}
-        return self._post("/api/trading/orders/place", body)
+        if not self.access_token:
+            raise PermissionError("no Supabase access_token (set SIG_COOKIE with the sb-*-auth-token cookie)")
+        if not self.profile_id:
+            raise PermissionError("no profile id (set SIG_PROFILE_ID or a cookie with the Supabase user)")
+        r = self.s.post(BASE + "/api/trading/orders/place", data=json.dumps(body), timeout=self.timeout,
+                        headers={"Authorization": f"Bearer {self.access_token}"})
+        try:
+            data = r.json()
+        except ValueError:
+            data = {"raw": r.text[:500]}
+        data["_status"] = r.status_code
+        if r.status_code >= 500:
+            data["_unknown"] = True          # outcome unknown: reconcile before retrying
+        elif r.status_code in (401, 403):
+            raise PermissionError(f"place {r.status_code}: session expired or not allowed")
+        elif r.status_code >= 400:
+            raise RuntimeError(f"place {r.status_code}: {data}")
+        return data
+
+    def place(self, market_id: int, exchange_id: int, yes_side: str, yes_price: float, qty: float,
+              holdings: float = 0.0, dry_run: bool = True, client_order_id: str | None = None) -> dict:
+        """Trade in YES terms; converted to the engine's representation.
+        yes_side BUY = get longer YES, SELL = get shorter YES. Returns the (last) response,
+        with all sub-orders under 'orders'.
+
+        Each sub-order's idempotencyKey derives from client_order_id, so resending the same
+        intent after a timeout cannot double-fill. A sub-order with an unknown outcome (5xx)
+        stops the rest and sets '_unknown': reconcile before doing anything else."""
+        client_order_id = client_order_id or str(uuid.uuid4())
+        resps = []
+        for i, o in enumerate(orders_for(yes_side, yes_price, qty, holdings)):
+            resps.append(self.place_raw(exchange_id, o["orderType"], o["priceLimit"], o["quantity"],
+                                        dry_run, idempotency_key=idempotency_key(client_order_id, i)))
+            if resps[-1].get("_unknown"):
+                break
+        filled = sum(abs(r.get("quantityTraded", 0) or 0) for r in resps if not r.get("dryRun"))
+        out = dict(resps[-1]); out["orders"] = resps
+        out["clientOrderId"] = client_order_id
+        out["filledQuantity"] = qty if all(r.get("dryRun") for r in resps) else filled
+        if any(r.get("_unknown") for r in resps):
+            out["_unknown"] = True
+        return out
 
     def cancel(self, order_id: str, dry_run: bool = True):
         if dry_run or not order_id:
             return {"dryRun": True}
-        return self._post("/api/trading/orders/cancel",
-                          {"orderId": order_id, "tournamentId": self.tournament})
+        r = self.s.post(BASE + "/api/trading/orders/cancel", timeout=self.timeout,
+                        data=json.dumps({"orderId": order_id, "tournamentId": self.tournament}),
+                        headers={"Authorization": f"Bearer {self.access_token}"})
+        return {"_status": r.status_code, "body": r.text[:500]}
+
+
+# ------------------------------------------------------------------ helpers
+def idempotency_key(client_order_id: str, index: int = 0) -> str:
+    """Stable UUID per (client order, sub-order), so a retry reuses the same key."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"sig-arb:{client_order_id}:{index}"))
+
+
+def levels_from_response(j: dict) -> List[dict]:
+    """Accept both book formats: legacy {levels:[...]} and live {books:[{bids,asks}]}."""
+    if "levels" in j:
+        return j["levels"]
+    out = []
+    for b in j.get("books", []):
+        ex = b.get("exchangeId")
+        out += [{"exchangeId": ex, "side": "BUY", "isYes": True, "price": l["price"],
+                 "quantity": l["quantity"]} for l in b.get("bids", [])]
+        out += [{"exchangeId": ex, "side": "SELL", "isYes": True, "price": l["price"],
+                 "quantity": l["quantity"]} for l in b.get("asks", [])]
+    return out
+
+
+def orders_for(yes_side: str, yes_price: float, qty: float, holdings: float = 0.0) -> List[dict]:
+    """Map a YES-terms intent onto engine orders (signed qty, side-specific price).
+    holdings: +YES / -NO currently held on this exchange."""
+    qty = int(qty)
+    out = []
+    if yes_side == "BUY":                       # want more YES
+        close = min(qty, int(max(0, -holdings)))       # first sell NO we hold
+        if close:
+            out.append({"orderType": "SELL", "quantity": -close, "priceLimit": round(1 - yes_price, 4)})
+        if qty - close:
+            out.append({"orderType": "BUY", "quantity": qty - close, "priceLimit": round(yes_price, 4)})
+    elif yes_side == "SELL":                    # want less YES
+        close = min(qty, int(max(0, holdings)))         # first sell YES we hold
+        if close:
+            out.append({"orderType": "SELL", "quantity": close, "priceLimit": round(yes_price, 4)})
+        if qty - close:
+            out.append({"orderType": "BUY", "quantity": -(qty - close), "priceLimit": round(1 - yes_price, 4)})
+    else:
+        raise ValueError(yes_side)
+    return out
+
+
+def decode_supabase_cookie(cookie_header: str) -> dict:
+    """Extract the Supabase session JSON from sb-<ref>-auth-token(.N) cookies."""
+    parts = {}
+    for c in cookie_header.split(";"):
+        if "=" not in c:
+            continue
+        k, v = c.strip().split("=", 1)
+        if k.startswith("sb-") and "-auth-token" in k:
+            idx = int(k.rsplit(".", 1)[1]) if k.rsplit(".", 1)[-1].isdigit() else 0
+            parts[idx] = urllib.parse.unquote(v)
+    if not parts:
+        return {}
+    raw = "".join(parts[i] for i in sorted(parts))
+    if raw.startswith("base64-"):
+        b = raw[7:]
+        raw = base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
+    try:
+        j = json.loads(raw)
+    except ValueError:
+        return {}
+    if isinstance(j, list):                     # very old supabase-js format
+        j = {"access_token": j[0], "refresh_token": j[1]}
+    return j

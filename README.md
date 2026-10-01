@@ -46,11 +46,21 @@ Every new signal is appended to `logs/signals.csv`. Use it to compare signals wi
 Tickets only show when the edge is positive. The **near misses** section shows races that are close (edge 0 means an arb).
 
 ## 3. Stage 2: semi-systematic (you approve, the script sends)
-Do this once, after trading opens on 1 Oct at 12:00 ET:
-1. Place one small order by hand with DevTools open.
-2. Under Network, find `/api/trading/orders/place` and look at its Payload and Response.
-3. Compare them with `Client.place()` in `sig_client.py` and fix any field names. Also fix the fill fields read by `_fill_of()` in `bot.py`.
-4. Set `PLACE_PAYLOAD_CONFIRMED = True`.
+`sig_client.place_raw()` already sends the payload the site's own order builder sends
+(read from the JS bundle with `tools/dump_order_logic_console.js`):
+`createdAt, exchangeId, profileId, orderType, priceLimit, quantity, open, tournamentId,
+idempotencyKey`. Quantity is signed (+YES / −NO), `priceLimit` is in the terms of the side
+traded, and auth is `Authorization: Bearer <access_token>`, taken from the Supabase
+`sb-*-auth-token` cookie. **`SIG_COOKIE` must include that cookie** (or set
+`SIG_ACCESS_TOKEN` and `SIG_PROFILE_ID`). Otherwise the dashboard preview shows
+`profileId: null` and live orders are refused.
+
+Before the first live run, once:
+1. In the dashboard, open a signal and click **Preview order payloads (dry run)**.
+2. Place one tiny order by hand on SIG with DevTools open. Under Network, compare
+   `/api/trading/orders/place` Payload with the preview, and read its Response.
+3. Make `_fill_of()` in `bot.py` read the real fill fields from that Response.
+4. Set `PLACE_PAYLOAD_CONFIRMED = True` in `sig_client.py`.
 
 Then:
 ```bash
@@ -58,18 +68,32 @@ python bot.py --mode confirm --interval 5            # prompts y/N, runs as DRY 
 python bot.py --mode confirm --interval 5 --live     # prompts y/N, sends real orders
 ```
 How execution works:
-- It calls `quote` on each leg, then places a limit order at the walk's worst price.
-- It cancels any unfilled remainder.
-- Later legs are sized to what actually filled.
+- Thinnest leg first. Each leg is quoted, then placed as a limit order at the walk's worst price.
+- Every leg gets a `client_order_id` (`<run>:<leg>`); its `idempotencyKey`s derive from it,
+  so a resend after a timeout cannot double-fill.
+- Unfilled remainders are cancelled; later legs are sized to what actually filled.
 - The last leg may move its price by up to `--chase-ticks` but never past break-even.
-- Results go to `logs/executions.jsonl`, with status `DONE`, `IMBALANCED` (shows the uneven quantity), `LEGGED` or `MISS`.
+- A 5xx on `place` means the outcome is unknown: the run stops with `UNKNOWN`.
+- Results go to `logs/executions.jsonl` with status `DONE`, `IMBALANCED`, `LEGGED`,
+  `MISS`, `ABORT`, `KILLED` or `UNKNOWN`. The dashboard's **Automated execution** panel
+  shows this tape, the bot heartbeat (`logs/bot_status.json`) and why orders are dry-run.
 
 ## 4. Stage 3: fully systematic
 ```bash
-python bot.py --mode auto --live --interval 3 --min-edge 0.005 --min-edge-3leg 0.01 \
-              --max-per-race 10000 --max-gross 60000 --cooldown 30
+python bot.py --mode auto --live --interval 3 --min-edge-3leg 0.01 --cooldown 30
 ```
-Risk checks run before every trade: marginal edge floor (stricter for 3-leg races), minimum PnL, capital cap per race, total capital cap, and a per-race cooldown. `IMBALANCED` or `LEGGED` results are **not** fixed automatically yet. Watch the log and flatten them by hand. Adding an automatic unwind is the next step.
+Auto mode sends live orders only when **all** of these hold, otherwise it dry-runs and says why:
+`--live`, `PLACE_PAYLOAD_CONFIRMED = True`, `"manual_approval": false` in
+`config/risk_limits.json`, and no `logs/KILL_SWITCH`.
+
+Limits come from `config/risk_limits.json` (`venue_exposure.sig` → gross cap,
+`per_trade_capital`/`event_exposure` → per-race cap, `min_net_edge` → edge floor). CLI flags
+can only tighten them. The bot checks the kill switch every tick and before every leg.
+
+In live mode an `UNKNOWN`, `LEGGED` or `IMBALANCED` result **engages the kill switch**,
+because nothing unwinds residuals automatically yet. Flatten by hand, reconcile, then
+release it from the dashboard (typed confirmation; refused while reconciliation requires
+the switch). **Engage kill switch** in the dashboard stops new orders at once.
 
 ## Files
 | File | Role |
@@ -79,6 +103,7 @@ Risk checks run before every trade: marginal edge floor (stricter for 3-leg race
 | `signals.py` | Signal generator: once, watch, dump, replay, tickets, CSV log |
 | `bot.py` | Systematic loop: signal, confirm or auto modes, risk checks, legged execution, journal |
 | `scan_console.js` | Browser-console fallback, if Python requests get blocked |
+| `tools/dump_order_logic_console.js` | Dumps the site bundle's order-entry code (how the payload was derived) |
 | `exhaustive.txt` | Your list of races that are safe for BUY_ALL |
 | `fixtures/sample_snapshot.json` | Offline test data (real Delaware book plus a synthetic multi-level race) |
 
@@ -89,7 +114,8 @@ Risk checks run before every trade: marginal edge floor (stricter for 3-leg race
 ## Local Dashboard
 
 Run `python3 dashboard.py --port 8876` and open http://127.0.0.1:8876.
-The read-only dashboard refreshes every 30 seconds and ranks opportunities by
+The dashboard never places orders; its only writes are the kill switch and `logs/audit.jsonl`.
+It refreshes every 30 seconds and ranks opportunities by
 estimated total profit, VWAP edge, ROI, or executable quantity. Expand a race
 for per-leg VWAP, worst execution price, market links, and cumulative profit
 across order-book depth. Capital caps apply independently to each race, not to

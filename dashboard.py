@@ -1,4 +1,7 @@
-"""Read-only local dashboard. Run: python3 dashboard.py --port 8765."""
+"""Local dashboard. Run: python3 dashboard.py --port 8765.
+
+It never places orders. Its only writes are the kill switch (engage/release) and the
+audit log; bot.py is the only process that sends orders."""
 import argparse
 import datetime as dt
 import hmac
@@ -36,6 +39,11 @@ LEVELS_DB = ROOT / 'logs' / 'levels.sqlite3'
 RISK_LIMITS = ROOT / 'config' / 'risk_limits.json'
 # Written by the reconciliation step; absent means reconciliation has not run.
 RECONCILIATION = ROOT / 'logs' / 'reconciliation.json'
+# Written by bot.py: one heartbeat file and an append-only execution journal.
+BOT_STATUS = ROOT / 'logs' / 'bot_status.json'
+EXEC_LOG = ROOT / 'logs' / 'executions.jsonl'
+AUDIT_LOG = ROOT / 'logs' / 'audit.jsonl'
+RELEASE_PHRASE = 'RELEASE KILL SWITCH'
 # Expected refresh cadence per feed in seconds; a feed is stale after twice this.
 FEED_CADENCE_S = {'sig_books': 15, 'sig_account': 60, 'crossvenue': 60, 'levels_db': 60}
 RELAY_PATH = '/api/browser_snapshot'
@@ -149,7 +157,8 @@ def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossven
     }
 
 
-def report(snapshot, params, crossvenue=None):
+def scan_params(params):
+    """Validated scanner filters shared by /api/signals and /api/orders/preview."""
     def number(name, default):
         value = float(params.get(name, [default])[0])
         if not math.isfinite(value) or value < 0:
@@ -163,9 +172,14 @@ def report(snapshot, params, crossvenue=None):
     if overall and cap_pct:
         per_punt = overall * cap_pct
         budget = min(budget, per_punt) if budget else per_punt
-    edge = number("edge", 0)
-    minimum = number("profit", 1)
-    min_roi = number("roi", 5) / 100
+    return dict(fee=fee, budget=budget, overall=overall, cap_pct=cap_pct, edge=number("edge", 0),
+                minimum=number("profit", 1), min_roi=number("roi", 5) / 100)
+
+
+def report(snapshot, params, crossvenue=None):
+    p = scan_params(params)
+    fee, budget, overall, cap_pct = p['fee'], p['budget'], p['overall'], p['cap_pct']
+    edge, minimum, min_roi = p['edge'], p['minimum'], p['min_roi']
     snapshot_age = _snapshot_age_seconds(snapshot)
     groups = group_markets(snapshot.markets)
     exhaustive = load_exhaustive()
@@ -218,6 +232,132 @@ def report(snapshot, params, crossvenue=None):
                 markets_list=[dict(id=m['id'], title=m['title']) for m in snapshot.markets])
 
 
+def order_preview(snapshot, params, race, direction):
+    """Exact order bodies bot.execute() would send for one scanner signal. Never sends."""
+    import bot
+    p = scan_params(params)
+    results = scan_diagnostics(snapshot, load_exhaustive(), fee_per_share=p['fee'],
+                               min_edge=p['edge'], cash=p['budget'] or None).opportunities
+    r = next((r for r in results if r.race == race and r.direction == direction), None)
+    if r is None:
+        return None
+    titles = {m['id']: m['title'] for m in snapshot.markets}
+    legs = bot.preview(Client(), r)
+    for leg in legs:
+        leg['title'] = titles.get(leg['market_id'])
+        leg['limit'] = round(leg['limit'], 4)
+    return {'race': r.race, 'direction': r.direction, 'qty': r.qty, 'pnl': round(r.pnl, 4),
+            'capital': round(r.capital, 4), 'snapshot_ts': snapshot.ts,
+            'payload_verified': sig_client.PLACE_PAYLOAD_CONFIRMED, 'dry_run': True,
+            'legs': legs,
+            'note': 'Dry-run bodies only. Later legs shrink to actual fills; the last leg may '
+                    'chase toward break-even. profileId is null until SIG_COOKIE carries the session.'}
+
+
+def _read_jsonl_tail(path, limit):
+    path = Path(path)
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text().splitlines()[-limit:]:
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows[::-1]
+
+
+def execution_view(source, limit=50):
+    """Bot heartbeat plus the newest execution journal rows. Local files only."""
+    bot = None
+    try:
+        bot = json.loads(Path(source.bot_status_path).read_text())
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        bot = {'error': 'bot status unreadable'}
+    if bot and bot.get('ts'):
+        try:
+            age = _iso_age_seconds(bot['ts'])
+            bot['age_s'] = round(age, 1)
+            # Three missed ticks (at least 30s) means the bot is not running.
+            bot['running'] = age <= max(30.0, 3 * float(bot.get('interval') or 5))
+        except (TypeError, ValueError):
+            bot['running'] = False
+    kill_path = Path(source.kill_switch_path)
+    return {'bot': bot, 'kill_switch': {'engaged': kill_path.exists()},
+            'executions': _read_jsonl_tail(source.exec_log_path, limit),
+            'release_phrase': RELEASE_PHRASE}
+
+
+def _audit(source, event, **fields):
+    path = Path(source.audit_log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as f:
+        f.write(json.dumps({'ts': dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'),
+                            'event': event, **fields}) + '\n')
+
+
+def engage_kill_switch(source, reason, actor='dashboard'):
+    """Always allowed and idempotent. The bot stops sending before its next leg."""
+    path = Path(source.kill_switch_path)
+    already = path.exists()
+    if not already:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(f"{reason}\nactor={actor} at={dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')}\n")
+        tmp.replace(path)
+    _audit(source, 'kill_switch_engage', actor=actor, reason=reason, already_engaged=already)
+    return {'engaged': True, 'already_engaged': already}
+
+
+def release_kill_switch(source, confirmation, actor='dashboard'):
+    """Needs the typed phrase and no reconciliation that demands the switch."""
+    if confirmation != RELEASE_PHRASE:
+        raise ValueError(f'Type "{RELEASE_PHRASE}" to release the kill switch.')
+    try:
+        recon = json.loads(Path(source.reconciliation_path).read_text())
+    except FileNotFoundError:
+        recon = None
+    except (OSError, ValueError):
+        raise PermissionError('Reconciliation file is unreadable; resolve it before release.')
+    if recon and recon.get('kill_switch_required'):
+        raise PermissionError('Reconciliation requires the kill switch; resolve the mismatch first.')
+    path = Path(source.kill_switch_path)
+    was = path.exists()
+    path.unlink(missing_ok=True)
+    _audit(source, 'kill_switch_release', actor=actor, was_engaged=was)
+    return {'engaged': False, 'was_engaged': was}
+
+
+def _json_body(h, limit=10_000):
+    length = int(h.headers.get('Content-Length', '0') or 0)
+    if length > limit:
+        raise ValueError('Request body too large')
+    body = json.loads(h.rfile.read(length) or b'{}') if length else {}
+    if not isinstance(body, dict):
+        raise ValueError('Expected a JSON object')
+    return body
+
+
+def execution_actions(source):
+    """POST actions for the dashboard; handler() adds the origin and token checks."""
+    def respond(h, fn):
+        try:
+            h.send_body(200, json.dumps(fn(_json_body(h))).encode(), 'application/json')
+        except PermissionError as exc:
+            h.send_body(409, json.dumps({'error': str(exc)}).encode(), 'application/json')
+        except (ValueError, json.JSONDecodeError) as exc:
+            h.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
+
+    return {
+        '/api/kill-switch/engage': lambda h: respond(h, lambda b: engage_kill_switch(
+            source, str(b.get('reason') or 'engaged from dashboard')[:300])),
+        '/api/kill-switch/release': lambda h: respond(h, lambda b: release_kill_switch(
+            source, b.get('confirmation'))),
+    }
+
+
 class Source:
     def __init__(self, replay=None, browser_snapshot_path=None):
         self.replay = replay
@@ -238,6 +378,9 @@ class Source:
         self.risk_limits_path = RISK_LIMITS
         self.reconciliation_path = RECONCILIATION
         self.news_breakers_path = NEWS_BREAKERS
+        self.bot_status_path = BOT_STATUS
+        self.exec_log_path = EXEC_LOG
+        self.audit_log_path = AUDIT_LOG
 
     def status_inputs(self):
         """Cached state only; never triggers a network fetch."""
@@ -548,6 +691,29 @@ def handler(source, action_token=None, actions=None):
                     self.send_body(200, json.dumps(build_status(source), allow_nan=False).encode(), 'application/json')
                 except Exception:
                     self.send_body(500, b'{"error":"Status unavailable."}', 'application/json')
+            elif url.path == '/api/execution':
+                try:
+                    self.send_body(200, json.dumps(execution_view(source), allow_nan=False).encode(), 'application/json')
+                except Exception:
+                    self.send_body(500, b'{"error":"Execution state unavailable."}', 'application/json')
+            elif url.path == '/api/orders/preview':
+                try:
+                    params = parse_qs(url.query)
+                    race = params.pop('race', [''])[0]
+                    direction = params.pop('direction', [''])[0]
+                    if not race or len(race) > 120:
+                        raise ValueError('Invalid race')
+                    if direction not in {'SELL_ALL', 'BUY_ALL'}:
+                        raise ValueError('Invalid direction')
+                    data = order_preview(source.get(), params, race, direction)
+                    if data is None:
+                        self.send_body(404, b'{"error":"Signal not in the current snapshot."}', 'application/json')
+                        return
+                    self.send_body(200, json.dumps(data, allow_nan=False).encode(), 'application/json')
+                except ValueError as exc:
+                    self.send_body(400, json.dumps({'error': str(exc)}).encode(), 'application/json')
+                except Exception:
+                    self.send_body(502, b'{"error":"Order preview unavailable. Retry the scan."}', 'application/json')
             elif url.path == '/api/crossvenue':
                 try:
                     self.send_body(200, json.dumps(source.get_crossvenue(), allow_nan=False).encode(), 'application/json')
@@ -685,6 +851,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--replay")
     args = parser.parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(Source(args.replay)))
+    source = Source(args.replay)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(source, actions=execution_actions(source)))
     print(f"Dashboard: http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()

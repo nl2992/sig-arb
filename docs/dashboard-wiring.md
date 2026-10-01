@@ -293,6 +293,14 @@ triggered by another endpoint.
 
 ### Kill switch
 
+**Status: implemented.** `POST /api/kill-switch/engage` and `/release` are dashboard
+actions (origin + action token). Release needs the typed phrase and is refused while
+`logs/reconciliation.json` sets `kill_switch_required`. Both write `logs/audit.jsonl`.
+`bot.py` checks the switch every tick and before every leg, and engages it itself after
+`UNKNOWN`, `LEGGED` or `IMBALANCED` in live mode. `GET /api/execution` serves the bot
+heartbeat and execution tape; `GET /api/orders/preview` returns the exact dry-run bodies.
+The remaining Phase 2–4 ticket endpoints are not built; `bot.py` is the executor.
+
 - `POST /api/kill-switch/engage`: create `logs/KILL_SWITCH` atomically with
   the reason and actor, then request cancels for open orders. It is always
   allowed, idempotent, and needs no confirmation.
