@@ -198,7 +198,14 @@ def main(argv=None):
 
     if a.cmd == "set-cookie":
         import subprocess
-        left = set_cookie(subprocess.run(["pbpaste"], capture_output=True, text=True).stdout)
+        import time
+        paste = lambda: subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+        if not sig_client.decode_supabase_cookie(paste().strip()).get("access_token"):
+            print("Waiting for the cookie on the clipboard. In the signed-in sig.thesuper.market tab,\n"
+                  "run  copy(document.cookie)  in the DevTools console. (Ctrl+C to cancel)", flush=True)
+            while not sig_client.decode_supabase_cookie(paste().strip()).get("access_token"):
+                time.sleep(1)
+        left = set_cookie(paste())
         print("SIG_COOKIE saved to .env" + (f"; token expires in {left / 60:.0f} min" if left else ""))
         return 0
 
