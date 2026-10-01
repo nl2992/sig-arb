@@ -16,7 +16,7 @@ class CheckTests(unittest.TestCase):
     def test_matching_pair_passes_with_flags(self):
         r = mappings.check_pair(SIG_R, "kalshi", self.ref("Will Republicans win the Senate race in Rhode Island?", "SENATERI-26-R"))
         self.assertTrue(all(r["checks"].values()))
-        self.assertTrue(any("sworn" in f for f in r["flags"]))
+        self.assertTrue(any("swearing-in" in f for f in r["flags"]))
 
     def test_wrong_party_or_race_fails(self):
         self.assertFalse(mappings.check_pair(SIG_R, "polymarket", self.ref("Will the Democrats win the Rhode Island Senate race?"))["checks"]["party"])
