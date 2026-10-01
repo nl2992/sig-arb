@@ -5,6 +5,7 @@ go_live.py — readiness checklist for live SIG trading. It never places an orde
     python go_live.py check --offline          # skip the read-only SIG requests
     python go_live.py compare capture.json     # compare your hand-placed test order with the bot's body
     python go_live.py set-cookie               # write the clipboard cookie (copy(document.cookie)) to .env
+    python go_live.py close 312 --limit 0.195  # exit a position (e.g. after LEGGED); asks y/N first
 
 `compare` takes a JSON file you save from DevTools after placing ONE tiny order by hand:
 
@@ -16,6 +17,7 @@ Secrets are never printed: only whether a value is present and when the token ex
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import pathlib
 import sys
@@ -186,15 +188,73 @@ def set_cookie(cookie: str, env_path: pathlib.Path = ROOT / ".env") -> float | N
     return None if exp is None else exp - time.time()
 
 
+MANUAL_LOG = ROOT / "logs" / "manual_actions.jsonl"
+
+
+def position(cli: Client, market_id: int, need_exchange: bool = True) -> tuple[float, int | None]:
+    """Net YES-terms holding (+YES / -NO) and exchange id for one market."""
+    rows = [h for h in cli.holdings(market_id) if str(h.get("settlementOption", "YES")).upper() == "YES"]
+    qty = sum(float(h.get("quantity") or 0) for h in rows)
+    ex = next((h.get("exchangeId") for h in rows if h.get("exchangeId")), None)
+    if ex is None and need_exchange:
+        ex = next((l.get("exchangeId") for l in cli.levels(market_id) if l.get("exchangeId")), None)
+    return qty, ex
+
+
+def close_plan(qty: float, limit: float) -> dict:
+    """YES-terms order that takes the holding to zero. `limit` is the YES price:
+    holding NO -> buy YES at <= limit; holding YES -> sell YES at >= limit."""
+    if not 0 < limit < 1:
+        raise ValueError("limit must be a YES price between 0 and 1")
+    if qty == 0:
+        raise ValueError("no position to close")
+    side = "BUY" if qty < 0 else "SELL"
+    return {"yes_side": side, "yes_price": limit, "qty": abs(qty), "holdings": qty,
+            "orders": sig_client.orders_for(side, limit, abs(qty), holdings=qty)}
+
+
+def close(cli: Client, market_id: int, limit: float, confirm=input, log_path: pathlib.Path = MANUAL_LOG) -> dict:
+    qty, ex = position(cli, market_id)
+    plan = close_plan(qty, limit)
+    held = f"{abs(qty):g} {'NO' if qty < 0 else 'YES'}"
+    action = (f"BUY YES <= {limit} (sells your NO at >= {1 - limit:.4f})" if plan["yes_side"] == "BUY"
+              else f"SELL YES >= {limit}")
+    print(f"Market #{market_id}: holding {held}. To close: {action} x {plan['qty']:g}")
+    print("Engine orders:", json.dumps(plan["orders"]))
+    if not sig_client.PLACE_PAYLOAD_CONFIRMED:
+        raise PermissionError("PLACE_PAYLOAD_CONFIRMED is False; nothing sent")
+    if confirm("Send this order LIVE? [y/N] ").strip().lower() != "y":
+        return {"status": "CANCELLED"}
+    resp = cli.place(market_id, ex, plan["yes_side"], limit, plan["qty"], holdings=qty, dry_run=False)
+    after, _ = position(cli, market_id, need_exchange=False)
+    result = {"status": "UNKNOWN" if resp.get("_unknown") else "SENT", "market_id": market_id,
+              "before": qty, "after": after, "filled": resp.get("filledQuantity"),
+              "client_order_id": resp.get("clientOrderId")}
+    log_path.parent.mkdir(exist_ok=True)
+    with log_path.open("a") as f:
+        f.write(json.dumps({"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                            "action": "close", "limit": limit, **result}) + "\n")
+    return result
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="readiness checklist")
     c.add_argument("--offline", action="store_true", help="skip read-only SIG requests")
     sub.add_parser("set-cookie", help="write the clipboard cookie to .env (macOS pbpaste)")
+    cl = sub.add_parser("close", help="exit a position in one market (asks y/N)")
+    cl.add_argument("market_id", type=int)
+    cl.add_argument("--limit", type=float, required=True, help="YES price limit")
     k = sub.add_parser("compare", help="compare a captured manual order")
     k.add_argument("capture", type=pathlib.Path)
     a = ap.parse_args(argv)
+
+    if a.cmd == "close":
+        result = close(Client(), a.market_id, a.limit)
+        print(json.dumps(result, indent=2))
+        return 0 if result["status"] in ("SENT", "CANCELLED") and result.get("after", 0) == 0 or \
+            result["status"] == "CANCELLED" else 1
 
     if a.cmd == "set-cookie":
         import subprocess

@@ -83,6 +83,44 @@ class SetCookieTests(unittest.TestCase):
                 go_live.set_cookie("_ga=1", pathlib.Path(d) / ".env")
 
 
+class CloseTests(unittest.TestCase):
+    def test_plan_for_held_no_sells_the_no(self):
+        plan = go_live.close_plan(-590, 0.195)
+        self.assertEqual(plan["yes_side"], "BUY")
+        self.assertEqual(plan["orders"], [{"orderType": "SELL", "quantity": -590, "priceLimit": 0.805}])
+
+    def test_plan_for_held_yes_sells_the_yes(self):
+        plan = go_live.close_plan(100, 0.4)
+        self.assertEqual(plan["orders"], [{"orderType": "SELL", "quantity": 100, "priceLimit": 0.4}])
+
+    def test_plan_rejects_bad_input(self):
+        for qty, limit in ((0, 0.5), (10, 1.2), (10, 0)):
+            with self.assertRaises(ValueError):
+                go_live.close_plan(qty, limit)
+
+    def test_close_asks_first_and_logs(self):
+        cli = mock.Mock()
+        holdings = [[{"settlementOption": "YES", "quantity": -590, "exchangeId": 900}], []]
+        cli.holdings.side_effect = lambda mid: holdings.pop(0)
+        cli.place.return_value = {"filledQuantity": 590, "clientOrderId": "c1"}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(sig_client, "PLACE_PAYLOAD_CONFIRMED", True):
+            log = pathlib.Path(d) / "m.jsonl"
+            r = go_live.close(cli, 312, 0.195, confirm=lambda _: "y", log_path=log)
+            self.assertEqual(r["status"], "SENT")
+            self.assertEqual(r["after"], 0)
+            cli.place.assert_called_once_with(312, 900, "BUY", 0.195, 590, holdings=-590, dry_run=False)
+            self.assertEqual(json.loads(log.read_text())["action"], "close")
+
+    def test_close_declined_sends_nothing(self):
+        cli = mock.Mock()
+        cli.holdings.return_value = [{"settlementOption": "YES", "quantity": -5, "exchangeId": 1}]
+        with mock.patch.object(sig_client, "PLACE_PAYLOAD_CONFIRMED", True):
+            r = go_live.close(cli, 312, 0.195, confirm=lambda _: "n", log_path=pathlib.Path("/nonexistent/x"))
+        self.assertEqual(r["status"], "CANCELLED")
+        cli.place.assert_not_called()
+
+
 class CompareTests(unittest.TestCase):
     def capture(self, **response):
         body = session_client().place_raw(1042, "BUY", 0.07, -5)["body"]
