@@ -43,6 +43,8 @@ log = logging.getLogger("sigarb")
 EXEC_LOG = HERE / "logs" / "executions.jsonl"
 KILL_SWITCH = HERE / "logs" / "KILL_SWITCH"
 BOT_STATUS = HERE / "logs" / "bot_status.json"
+# Latest books the bot has read, shared with the dashboard so it never polls SIG itself.
+BOT_BOOKS = HERE / "logs" / "bot_books.json"
 RISK_LIMITS = HERE / "config" / "risk_limits.json"
 # Results that leave naked or unknown exposure; live mode stops on these.
 HALT_STATUSES = {"UNKNOWN", "LEGGED", "IMBALANCED"}
@@ -282,6 +284,22 @@ def live_blockers(a, limits: dict, kill_switch: pathlib.Path = None, cli: Client
     return out
 
 
+def write_books(path: pathlib.Path, cache: dict) -> None:
+    """cache: market_id -> (market, levels, observed_at). The snapshot ts is the OLDEST
+    observation, so consumers never treat a rotated-in stale book as fresh."""
+    if not cache:
+        return
+    rows = sorted(cache.items())
+    payload = {"ts": min(obs for _, (_, _, obs) in rows),
+               "markets": [m for _, (m, _, _) in rows],
+               "levels": {str(mid): lv for mid, (_, lv, _) in rows},
+               "observed_at": {str(mid): obs for mid, (_, _, obs) in rows}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload))
+    tmp.replace(path)
+
+
 def write_status(path: pathlib.Path, **fields):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -337,6 +355,7 @@ def main():
              a.mode, a.live, len(markets), a.max_gross, a.max_per_race, a.min_edge)
 
     balance, balance_at = None, 0.0
+    book_cache = {}
     while True:
         t0 = time.time()
         left = cli.token_seconds_left()
@@ -361,6 +380,8 @@ def main():
             scan = {}
             # Each race is evaluated, and traded, as soon as all its books arrive.
             for race, snap in scanner.stream(full=full_sweep, stats=scan):
+                for m in snap.markets:
+                    book_cache[m["id"]] = (m, snap.levels[m["id"]], snap.ts)
                 sigs, near, titles = generate(snap, a, exhaustive, budget)
                 fresh = [s for s in sigs if sig_key(s) not in seen]
                 seen = {k for k in seen if k[0] != race} | {sig_key(s) for s in sigs}
@@ -401,6 +422,7 @@ def main():
                                            f"{res.get('action') or 'operator review required'}")
                         log.error("kill switch engaged after %s on %s", res["status"], r.race)
             scan.pop("complete_races", None)
+            write_books(BOT_BOOKS, book_cache)
             if scan.get("rate_limited"):
                 log.warning("SIG rate limit (429): pausing scans %.0fs", scan["paused_s"])
             elif scan.get("complete"):

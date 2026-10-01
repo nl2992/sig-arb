@@ -5,6 +5,7 @@ import json
 import pathlib
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 from http.server import ThreadingHTTPServer
@@ -270,3 +271,43 @@ class DashboardExecutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedBooksTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = pathlib.Path(self.tmp.name) / "bot_books.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_books_file_uses_oldest_observation(self):
+        m1, m2 = {"id": 1, "title": "a"}, {"id": 2, "title": "b"}
+        bot.write_books(self.path, {1: (m1, [], "2026-10-01T20:00:10+00:00"),
+                                    2: (m2, [], "2026-10-01T20:00:00+00:00")})
+        j = json.loads(self.path.read_text())
+        self.assertEqual(j["ts"], "2026-10-01T20:00:00+00:00")
+        self.assertEqual(set(j["levels"]), {"1", "2"})
+
+    def test_dashboard_prefers_fresh_bot_books_without_sig_calls(self):
+        import unittest.mock as um
+        snap = Snapshot.load(FIX)
+        bot.write_books(self.path, {m["id"]: (m, snap.levels[m["id"]], snap.ts) for m in snap.markets})
+        source = Source()
+        source.bot_books_path = self.path
+        with um.patch("dashboard.Client") as client:
+            got = source.get()
+        client.assert_not_called()
+        self.assertEqual(len(got.markets), len(snap.markets))
+
+    def test_stale_bot_books_fall_back_to_fetch(self):
+        import os, unittest.mock as um
+        snap = Snapshot.load(FIX)
+        bot.write_books(self.path, {m["id"]: (m, snap.levels[m["id"]], snap.ts) for m in snap.markets})
+        old = time.time() - 600
+        os.utime(self.path, (old, old))
+        source = Source()
+        source.bot_books_path = self.path
+        with um.patch.object(Source, "_fetch_snapshot", return_value=snap) as fetch:
+            source.get()
+        fetch.assert_called_once()

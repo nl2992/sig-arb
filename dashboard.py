@@ -41,6 +41,7 @@ RISK_LIMITS = ROOT / 'config' / 'risk_limits.json'
 RECONCILIATION = ROOT / 'logs' / 'reconciliation.json'
 # Written by bot.py: one heartbeat file and an append-only execution journal.
 BOT_STATUS = ROOT / 'logs' / 'bot_status.json'
+BOT_BOOKS = ROOT / 'logs' / 'bot_books.json'
 EXEC_LOG = ROOT / 'logs' / 'executions.jsonl'
 AUDIT_LOG = ROOT / 'logs' / 'audit.jsonl'
 RELEASE_PHRASE = 'RELEASE KILL SWITCH'
@@ -379,6 +380,8 @@ class Source:
         self.reconciliation_path = RECONCILIATION
         self.news_breakers_path = NEWS_BREAKERS
         self.bot_status_path = BOT_STATUS
+        self.bot_books_path = BOT_BOOKS
+        self.fetch_lock = threading.Lock()
         self.exec_log_path = EXEC_LOG
         self.audit_log_path = AUDIT_LOG
 
@@ -430,17 +433,58 @@ class Source:
             self.news_cache[market_id] = (time.monotonic(), data)
             return data
 
+    def _bot_books(self):
+        """The running bot's latest books (logs/bot_books.json) if written in the last
+        minute; reading them costs no SIG requests and never competes with the bot."""
+        path = Path(self.bot_books_path)
+        try:
+            if time.time() - path.stat().st_mtime > 60:
+                return None
+            j = json.loads(path.read_text())
+            return Snapshot(j['ts'], j['markets'], {int(k): v for k, v in j['levels'].items()})
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def _fetch_snapshot(self):
+        """Fallback when no bot is running: every book, tolerating individual failures."""
+        from concurrent.futures import ThreadPoolExecutor
+        import fast_scan
+        client = Client(concurrency=4)
+        markets = fast_scan.load_markets(client)
+
+        def one(m):
+            try:
+                return m['id'], client.levels(m['id'])
+            except Exception:
+                return m['id'], None
+        with ThreadPoolExecutor(4) as ex:
+            got = {mid: lv for mid, lv in ex.map(one, markets) if lv is not None}
+        if not got:
+            raise RuntimeError('no SIG books could be read')
+        return Snapshot(dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'),
+                        [m for m in markets if m['id'] in got], got)
+
     def get(self):
         with self.lock:
-            if self.snapshot is None or time.monotonic()-self.fetched >= 15:
-                if self.replay:
-                    snapshot = Snapshot.load(self.replay)
-                else:
-                    client = Client()
-                    snapshot = Snapshot.fetch(client, client.markets())
-                self.snapshot = snapshot
-                self.fetched = time.monotonic()
-            return self.snapshot
+            if self.snapshot is not None and time.monotonic() - self.fetched < 15:
+                return self.snapshot
+            cached = self.snapshot
+        if self.replay:
+            snapshot = Snapshot.load(self.replay)
+        else:
+            snapshot = self._bot_books()
+            if snapshot is None:
+                # One network fetch at a time, and never while holding self.lock
+                # (status and portfolio reads need it).
+                if not self.fetch_lock.acquire(blocking=cached is None):
+                    return cached
+                try:
+                    snapshot = self._fetch_snapshot()
+                finally:
+                    self.fetch_lock.release()
+        with self.lock:
+            self.snapshot, self.fetched = snapshot, time.monotonic()
+            return snapshot
 
     def get_crossvenue(self):
         if self.replay:
@@ -840,8 +884,11 @@ def handler(source, action_token=None, actions=None):
                 self.send_header("Access-Control-Allow-Origin", RELAY_ORIGIN)
                 self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass        # the browser gave up on this request; nothing to deliver
 
     return Handler
 
