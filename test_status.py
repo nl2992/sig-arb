@@ -1,3 +1,4 @@
+import sig_client
 import http.client
 import json
 import sqlite3
@@ -43,7 +44,7 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(status['data_mode'], 'replay')
         self.assertEqual(status['mode'], 'research')
         self.assertFalse(g['live_mode']['pass'])
-        self.assertFalse(g['payload_verified']['pass'])
+        self.assertEqual(g['payload_verified']['pass'], sig_client.PLACE_PAYLOAD_CONFIRMED)
         self.assertFalse(g['sig_auth']['pass'])
         self.assertFalse(g['recon_clean']['pass'])
         self.assertFalse(g['quotes_fresh']['pass'])  # fixture snapshot is old

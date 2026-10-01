@@ -100,6 +100,14 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(post.call_count, 1)
         self.assertTrue(resp["_unknown"])
 
+    def test_missing_fill_field_is_unknown(self):
+        c = client()
+        with mock.patch.object(sig_client, "PLACE_PAYLOAD_CONFIRMED", True), \
+                mock.patch.object(c.s, "post", return_value=Resp(200, {"orderId": "o1", "filled": 10})) as post:
+            resp = c.place(1, 1042, "SELL", 0.2, 300, holdings=100, dry_run=False)
+        self.assertEqual(post.call_count, 1)
+        self.assertTrue(resp["_unknown"])
+
     def test_rejections_raise(self):
         c = client()
         with mock.patch.object(sig_client, "PLACE_PAYLOAD_CONFIRMED", True):

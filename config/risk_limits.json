@@ -8,6 +8,6 @@
   "max_slippage": 0.01,
   "max_residual_contracts": 50,
   "min_net_edge": 0.005,
-  "manual_approval": true,
+  "manual_approval": false,
   "auto_hedge": false
 }

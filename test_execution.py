@@ -6,6 +6,7 @@ import pathlib
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlencode
 
@@ -109,7 +110,8 @@ class BotSafetyTests(unittest.TestCase):
     def test_live_blockers(self):
         limits = {"manual_approval": True}
         a = argparse.Namespace(mode="auto", live=True)
-        blockers = bot.live_blockers(a, limits, kill_switch=self.kill)
+        with unittest.mock.patch.object(bot.sig_client, "PLACE_PAYLOAD_CONFIRMED", False):
+            blockers = bot.live_blockers(a, limits, kill_switch=self.kill)
         self.assertTrue(any("manual_approval" in b for b in blockers))
         self.assertTrue(any("PLACE_PAYLOAD_CONFIRMED" in b for b in blockers))
         a = argparse.Namespace(mode="confirm", live=False)

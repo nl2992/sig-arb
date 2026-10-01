@@ -45,6 +45,8 @@ BOT_STATUS = HERE / "logs" / "bot_status.json"
 RISK_LIMITS = HERE / "config" / "risk_limits.json"
 # Results that leave naked or unknown exposure; live mode stops on these.
 HALT_STATUSES = {"UNKNOWN", "LEGGED", "IMBALANCED"}
+# Live orders stop this long before the SIG access token expires.
+TOKEN_MARGIN_S = 300
 
 
 def kill_switch_engaged(path: pathlib.Path = None) -> bool:
@@ -185,7 +187,7 @@ def apply_limits(a, limits: dict):
     return a
 
 
-def live_blockers(a, limits: dict, kill_switch: pathlib.Path = None) -> list:
+def live_blockers(a, limits: dict, kill_switch: pathlib.Path = None, cli: Client = None) -> list:
     """Why orders would be dry-run right now (empty list = live orders allowed)."""
     out = []
     if a.mode == "signal":
@@ -198,6 +200,13 @@ def live_blockers(a, limits: dict, kill_switch: pathlib.Path = None) -> list:
         out.append("risk_limits.json manual_approval is true (auto needs false)")
     if kill_switch_engaged(kill_switch):
         out.append("kill switch engaged")
+    if cli is not None:
+        if not (cli.access_token and cli.profile_id):
+            out.append("no SIG session token in SIG_COOKIE (sb-*-auth-token)")
+        else:
+            left = cli.token_seconds_left()
+            if left is not None and left < TOKEN_MARGIN_S:
+                out.append("SIG access token expires in under 5 min; copy a fresh cookie and restart")
     return out
 
 
@@ -244,7 +253,7 @@ def main():
 
     while True:
         t0 = time.time()
-        blockers = live_blockers(a, limits)
+        blockers = live_blockers(a, limits, cli=cli)
         live = a.mode != "signal" and not blockers
         if a.mode != "signal" and a.live and blockers:
             log.warning("orders are DRY RUN: %s", "; ".join(blockers))
@@ -296,7 +305,7 @@ def main():
                      payload_confirmed=sig_client.PLACE_PAYLOAD_CONFIRMED,
                      interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
                      max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
-                     last_exec=last_exec, error=error)
+                     last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left())
         time.sleep(max(0.0, a.interval - (time.time() - t0)))
 
 

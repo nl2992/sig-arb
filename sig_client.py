@@ -29,10 +29,10 @@ BASE = "https://sig.thesuper.market"
 DEFAULT_TOURNAMENT = "bda92870-621e-47b0-bc3c-3602c5c26f55"
 
 # The payload below matches the site's own order builder (read from the JS bundle
-# with dump_order_logic_console.js, 1 Oct). Flip to True only after ONE tiny live
-# order placed by hand with DevTools open shows the same /api/trading/orders/place
-# payload, and _fill_of() in bot.py reads the real fill fields. See README §3.
-PLACE_PAYLOAD_CONFIRMED = False
+# with dump_order_logic_console.js, 1 Oct). Enabled 1 Oct for the competition without
+# a manual capture: a live response missing quantityTraded is treated as UNKNOWN, which
+# halts the bot and engages the kill switch. `go_live.py compare` still verifies a capture.
+PLACE_PAYLOAD_CONFIRMED = True
 
 
 def load_env(path: str | os.PathLike = None) -> None:
@@ -61,6 +61,12 @@ class Client:
         sess = decode_supabase_cookie(self.cookie) if self.cookie else {}
         self.access_token = os.environ.get("SIG_ACCESS_TOKEN") or sess.get("access_token")
         self.profile_id = os.environ.get("SIG_PROFILE_ID") or (sess.get("user") or {}).get("id")
+
+    def token_seconds_left(self) -> float | None:
+        """Seconds until the access token's JWT `exp`; None when absent or unreadable.
+        Supabase tokens are short-lived (about an hour); a fresh cookie renews them."""
+        exp = jwt_claims(self.access_token).get("exp") if self.access_token else None
+        return None if exp is None else float(exp) - dt.datetime.now(dt.timezone.utc).timestamp()
 
     # ---------------------------------------------------------------- http
     def _get(self, path: str, **params):
@@ -175,6 +181,11 @@ class Client:
         for i, o in enumerate(orders_for(yes_side, yes_price, qty, holdings)):
             resps.append(self.place_raw(exchange_id, o["orderType"], o["priceLimit"], o["quantity"],
                                         dry_run, idempotency_key=idempotency_key(client_order_id, i)))
+            # A live response without quantityTraded means we cannot tell what filled:
+            # treat it as unknown so the bot halts instead of assuming zero.
+            if not resps[-1].get("dryRun") and "quantityTraded" not in resps[-1]:
+                resps[-1]["_unknown"] = True
+                resps[-1]["_unknown_reason"] = "response has no quantityTraded"
             if resps[-1].get("_unknown"):
                 break
         filled = sum(abs(r.get("quantityTraded", 0) or 0) for r in resps if not r.get("dryRun"))
@@ -234,6 +245,16 @@ def orders_for(yes_side: str, yes_price: float, qty: float, holdings: float = 0.
     else:
         raise ValueError(yes_side)
     return out
+
+
+def jwt_claims(token: str) -> dict:
+    """Unverified JWT payload (only used to read `exp`); {} if it is not a JWT."""
+    try:
+        part = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    except (IndexError, ValueError, AttributeError):
+        return {}
+    return claims if isinstance(claims, dict) else {}
 
 
 def decode_supabase_cookie(cookie_header: str) -> dict:
