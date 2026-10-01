@@ -123,6 +123,73 @@ class BotSafetyTests(unittest.TestCase):
         self.assertIn("--live not set", bot.live_blockers(a, limits, kill_switch=self.kill))
 
 
+class ParallelExecutionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.kill = pathlib.Path(self.tmp.name) / "KILL_SWITCH"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cli(self, fills):
+        """fills: {market_id: [fraction for first order, fraction for repair order, ...]}"""
+        import threading
+        lock, seq = threading.Lock(), {}
+
+        class C(Recorder):
+            def place(s, mid, ex, side, px, q, dry_run=True, client_order_id=None):
+                with lock:
+                    n = seq.get(mid, 0); seq[mid] = n + 1
+                    s.calls.append(("place", mid, client_order_id, px, q))
+                return {"orderId": f"o{mid}{n}", "quantityTraded": q, "filledQuantity": q * fills[mid][n], "avgPrice": px}
+        return C()
+
+    def legs(self):
+        return [l["market_id"] for l in bot.leg_plan(synthetic())]
+
+    def test_all_legs_fill(self):
+        a, b = self.legs()
+        cli = self.cli({a: [1.0], b: [1.0]})
+        res = bot.execute_parallel(cli, synthetic(), live=True, kill_switch=self.kill, run_id="p")
+        self.assertEqual(res["status"], "DONE")
+        self.assertEqual(sorted(c[2] for c in cli.calls if c[0] == "place"), ["p:0", "p:1"])
+
+    def test_short_leg_is_repaired_within_break_even(self):
+        a, b = self.legs()
+        cli = self.cli({a: [1.0], b: [0.0, 1.0]})
+        r = synthetic()
+        res = bot.execute_parallel(cli, r, live=True, kill_switch=self.kill)
+        self.assertEqual(res["status"], "DONE")
+        repair = [c for c in cli.calls if c[0] == "place" and c[2].endswith("r")]
+        self.assertEqual(len(repair), 1)
+        first_limit = next(l["limit"] for l in bot.leg_plan(r) if l["market_id"] == b)
+        be = 1 - next(l["limit"] for l in bot.leg_plan(r) if l["market_id"] == a)
+        self.assertGreaterEqual(repair[0][3] + 1e-9, max(be, first_limit - 0.01))   # SELL: never below b/e
+
+    def test_failed_repair_is_legged(self):
+        a, b = self.legs()
+        cli = self.cli({a: [1.0], b: [0.0, 0.0]})
+        res = bot.execute_parallel(cli, synthetic(), live=True, kill_switch=self.kill)
+        self.assertEqual(res["status"], "LEGGED")
+        self.assertIn(res["status"], bot.HALT_STATUSES)
+
+    def test_both_miss(self):
+        a, b = self.legs()
+        res = bot.execute_parallel(self.cli({a: [0.0], b: [0.0]}), synthetic(), live=True, kill_switch=self.kill)
+        self.assertEqual(res["status"], "MISS")
+
+    def test_unknown_outcome_halts(self):
+        cli = Recorder(unknown=True)
+        res = bot.execute_parallel(cli, synthetic(), live=True, kill_switch=self.kill)
+        self.assertEqual(res["status"], "UNKNOWN")
+
+    def test_kill_switch(self):
+        bot.engage_kill_switch("t", path=self.kill)
+        cli = Recorder()
+        self.assertEqual(bot.execute_parallel(cli, synthetic(), live=True, kill_switch=self.kill)["status"], "KILLED")
+        self.assertEqual(cli.calls, [])
+
+
 class DashboardExecutionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

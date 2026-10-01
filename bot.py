@@ -150,6 +150,72 @@ def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: f
     return {"status": "DONE", "qty": hedged, "legs": rep, "run_id": run_id}
 
 
+def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: float = 0.005,
+                     fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None) -> dict:
+    """Send every leg at once at its walk limit, so no leg waits on another's round trip.
+    If exactly one leg comes back short, top it up once (chasing at most `chase_ticks`,
+    never past the break-even implied by the other legs' fills). Anything still uneven
+    is IMBALANCED / LEGGED and halts the bot as in execute()."""
+    from concurrent.futures import ThreadPoolExecutor
+    run_id = run_id or uuid.uuid4().hex[:12]
+    if kill_switch_engaged(kill_switch):
+        return {"status": "KILLED", "legs": [], "run_id": run_id}
+    plan = leg_plan(r)
+
+    def send(k, leg, limit, qty, suffix=""):
+        coid = f"{run_id}:{k}{suffix}"
+        resp = cli.place(leg["market_id"], leg["exchange_id"], leg["yes_side"], limit, qty,
+                         dry_run=not live, client_order_id=coid)
+        fq, fp, oids = _fill_of(resp, qty, limit)
+        if fq < qty and not resp.get("_unknown"):
+            for oid in oids:
+                cli.cancel(oid, dry_run=not live)
+        return {"market": leg["market_id"], "side": leg["yes_side"], "limit": round(limit, 4), "req": qty,
+                "filled": fq, "avg": fp, "client_order_id": coid, "dryRun": bool(resp.get("dryRun")),
+                "_unknown": bool(resp.get("_unknown"))}
+
+    with ThreadPoolExecutor(len(plan)) as ex:
+        rep = list(ex.map(lambda kl: send(kl[0], kl[1], kl[1]["limit"], r.qty), enumerate(plan)))
+    if any(x.pop("_unknown") for x in rep):
+        return {"status": "UNKNOWN", "legs": rep, "run_id": run_id, "parallel": True,
+                "action": "reconcile holdings and open orders before any retry"}
+
+    fills = [x["filled"] for x in rep]
+    top = max(fills)
+    short = [k for k, f in enumerate(fills) if f < top]
+    if top > 0 and len(short) == 1 and not kill_switch_engaged(kill_switch):
+        k = short[0]
+        leg, need = plan[k], top - fills[k]
+        be = breakeven_limit(r.direction, [x["avg"] for j, x in enumerate(rep) if j != k], fee, len(plan))
+        c = chase_ticks * tick
+        limit = (max(be, leg["limit"] - c) if leg["yes_side"] == "SELL" else min(be, leg["limit"] + c))
+        extra = send(k, leg, limit, need, suffix="r")
+        if extra.pop("_unknown"):
+            rep.append(extra)
+            return {"status": "UNKNOWN", "legs": rep, "run_id": run_id, "parallel": True,
+                    "action": "reconcile holdings and open orders before any retry"}
+        extra["repair"] = True
+        got = rep[k]["filled"] + extra["filled"]
+        if got:
+            rep[k]["avg"] = (rep[k]["avg"] * rep[k]["filled"] + extra["avg"] * extra["filled"]) / got
+        rep[k]["filled"] = got
+        rep.append(extra)
+
+    legs = rep[:len(plan)]
+    fills = [x["filled"] for x in legs]
+    if max(fills) <= 0:
+        return {"status": "MISS", "legs": rep, "run_id": run_id, "parallel": True}
+    hedged = min(fills)
+    if hedged <= 0:
+        return {"status": "LEGGED", "legs": rep, "run_id": run_id, "parallel": True,
+                "action": "manually flatten the filled legs"}
+    residual = {x["market"]: x["filled"] - hedged for x in legs if x["filled"] > hedged}
+    if residual:
+        return {"status": "IMBALANCED", "qty": hedged, "legs": rep, "residual": residual, "run_id": run_id,
+                "parallel": True, "action": "flatten residual or work the short leg manually"}
+    return {"status": "DONE", "qty": hedged, "legs": rep, "run_id": run_id, "parallel": True}
+
+
 # ---------------------------------------------------------- risk gate
 class Risk:
     def __init__(self, a):
@@ -247,6 +313,8 @@ def main():
                     help="parallel book requests (SIG returns 429 above its limit)")
     ap.add_argument("--refresh-universe", type=float, default=1800, help="sec between market-list refreshes")
     ap.add_argument("--pre-quote", action="store_true", help="call the quote endpoint before each leg (slower)")
+    ap.add_argument("--sequential", action="store_true",
+                    help="send legs one after another (thinnest first) instead of all at once")
     ap.add_argument("--balance-every", type=float, default=60, help="sec between balance refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -308,8 +376,11 @@ def main():
                         if input(f"Execute {r.race} {r.direction} x{r.qty:g} "
                                  f"(pnl {r.pnl:.2f}) {'LIVE' if live else 'DRY RUN'}? [y/N] ").strip().lower() != "y":
                             continue
-                    res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
-                                  pre_quote=a.pre_quote)
+                    if a.sequential:
+                        res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
+                                      pre_quote=a.pre_quote)
+                    else:
+                        res = execute_parallel(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee)
                     risk.book(r, res)
                     journal(r, res, a.mode, live)
                     counts["executed"] += 1
