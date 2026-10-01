@@ -24,7 +24,7 @@ class Resp:
 
 def client(cookie=COOKIE):
     """A client built only from `cookie`, never from the developer's real .env."""
-    env = {k: v for k, v in os.environ.items() if k not in ("SIG_ACCESS_TOKEN", "SIG_PROFILE_ID")}
+    env = {k: v for k, v in os.environ.items() if k not in ("SIG_COOKIE", "SIG_ACCESS_TOKEN", "SIG_PROFILE_ID")}
     with mock.patch.object(sig_client, "load_env"), mock.patch.dict(os.environ, env, clear=True):
         return Client(cookie=cookie)
 
