@@ -80,9 +80,14 @@ class BotSafetyTests(unittest.TestCase):
         self.assertEqual([c[2] for c in cli.calls if c[0] == "place"], ["r1:0", "r1:1"])
         self.assertEqual([l["client_order_id"] for l in res["legs"]], ["r1:0", "r1:1"])
 
-    def test_quotes_use_engine_representation(self):
+    def test_no_quote_round_trip_by_default(self):
         cli = Recorder()
         bot.execute(cli, synthetic(), live=True, kill_switch=self.kill)
+        self.assertFalse([c for c in cli.calls if c[0] == "quote"])
+
+    def test_quotes_use_engine_representation(self):
+        cli = Recorder()
+        bot.execute(cli, synthetic(), live=True, kill_switch=self.kill, pre_quote=True)
         quote = next(c for c in cli.calls if c[0] == "quote")
         self.assertEqual(quote[2], "BUY")          # SELL_ALL legs are bought as NO
         self.assertLess(quote[4], 0)               # negative quantity = NO shares

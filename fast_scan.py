@@ -6,8 +6,9 @@ or more. Each tick here fetches:
   * every HOT race (top-of-book edge within `hot_band` of an arb, or unknown), and
   * the next `sweep_races` races in a rotation, so every race is refreshed regularly.
 
-The snapshot a tick returns contains ONLY races whose every leg was fetched in that
-tick, so signals (and orders) are never built from stale books. The market list is
+stream() yields each race the moment all its books have arrived, so the bot can trade
+it immediately; tick() collects a whole pass. Either way only races whose every leg was
+read in that pass are returned, so signals (and orders) are never built from stale books. The market list is
 cached on disk because paging it is slow.
 
 SIG rate-limits (HTTP 429). On the first 429 a tick stops sending requests and the
@@ -19,8 +20,8 @@ import datetime as dt
 import json
 import pathlib
 import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from arb_engine import Book, group_markets
 from sig_client import RateLimited
@@ -98,8 +99,23 @@ class TieredScanner:
             self.cursor = start + n
         return chosen
 
-    def _fetch(self, ids: List[int]) -> tuple[Dict[int, list], Optional[RateLimited]]:
+    def stream(self, full: bool = False, stats: Optional[dict] = None) -> Iterator[Tuple[str, Snapshot]]:
+        """Yield (race, snapshot of just that race) the moment all its books have arrived,
+        so a race is evaluated ~one request after it was read, not one full pass later.
+        `stats` (if given) is filled in when the generator finishes."""
+        t0 = time.time()
+        stats = stats if stats is not None else {}
+        stats.update(races=0, complete=0, complete_races=[], books=0, failed_books=0,
+                     hot=len(self.hot()), seconds=0.0, rate_limited=False, paused_s=round(self.paused_for(), 1))
+        if self.paused_for() > 0:
+            stats["rate_limited"] = True
+            return
+        races = self.select(full)
+        stats.update(races=len(races), books=sum(len(self.groups[r]) for r in races))
         limited: List[RateLimited] = []
+        pending = {r: set(self.groups[r].values()) for r in races}
+        race_of = {mid: r for r in races for mid in self.groups[r].values()}
+        got: Dict[int, list] = {}
 
         def one(mid):
             if limited:                       # stop sending once SIG has said 429
@@ -109,46 +125,53 @@ class TieredScanner:
             except RateLimited as exc:
                 limited.append(exc)
                 return mid, None, str(exc)
-            except Exception as exc:          # one slow/failed book never fails the tick
+            except Exception as exc:          # one slow/failed book never fails the pass
                 return mid, None, f"{type(exc).__name__}: {str(exc)[:120]}"
-        out = {}
-        with ThreadPoolExecutor(self.concurrency) as ex:
-            for mid, levels, err in ex.map(one, ids):
-                if err is None:
-                    out[mid] = levels
-                    self.failed.pop(mid, None)
-                else:
+
+        # Hot races first so they are read (and traded) before the sweep.
+        ex = ThreadPoolExecutor(self.concurrency)
+        try:
+            futures = [ex.submit(one, mid) for r in races for mid in self.groups[r].values()]
+            for fut in as_completed(futures):
+                mid, levels, err = fut.result()
+                r = race_of[mid]
+                if err is not None:
                     self.failed[mid] = err
-        return out, (limited[0] if limited else None)
+                    stats["failed_books"] += 1
+                    pending.pop(r, None)          # race can no longer complete this pass
+                    continue
+                self.failed.pop(mid, None)
+                got[mid] = levels
+                if r not in pending:
+                    continue
+                pending[r].discard(mid)
+                if pending[r]:
+                    continue
+                del pending[r]
+                legs = list(self.groups[r].values())
+                self.edge[r] = top_edge([Book.from_levels(m, got[m]) for m in legs], r in self.exhaustive)
+                stats["complete"] += 1
+                stats["complete_races"].append(r)
+                yield r, Snapshot(dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                                  [{"id": m, "title": self.markets[m]["title"]} for m in legs],
+                                  {m: got[m] for m in legs})
+        finally:
+            ex.shutdown(wait=True, cancel_futures=True)
+            if limited:
+                self.backoff = min(self.BACKOFF_MAX_S, max(self.BACKOFF_START_S, self.backoff * 2,
+                                                           limited[0].retry_after or 0))
+                self.pause_until = time.time() + self.backoff
+            elif stats["races"]:
+                self.backoff = 0.0
+            stats.update(hot=len(self.hot()), seconds=round(time.time() - t0, 1),
+                         rate_limited=bool(limited), paused_s=round(self.paused_for(), 1))
 
     def tick(self, full: bool = False) -> tuple[Snapshot, dict]:
-        """Fetch the selected races; return a snapshot of only the complete ones."""
-        t0 = time.time()
-        if self.paused_for() > 0:
-            empty = Snapshot(dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), [], {})
-            return empty, {"races": 0, "complete": 0, "complete_races": [], "books": 0, "failed_books": 0,
-                           "hot": len(self.hot()), "seconds": 0.0, "rate_limited": True,
-                           "paused_s": round(self.paused_for(), 1)}
-        races = self.select(full)
-        ids = [mid for r in races for mid in self.groups[r].values()]
-        levels, limited = self._fetch(ids)
-        if limited:
-            self.backoff = min(self.BACKOFF_MAX_S, max(self.BACKOFF_START_S, self.backoff * 2,
-                                                       limited.retry_after or 0))
-            self.pause_until = time.time() + self.backoff
-        else:
-            self.backoff = 0.0
-        complete = [r for r in races if all(m in levels for m in self.groups[r].values())]
-        for r in complete:
-            legs = self.groups[r].values()
-            books = [Book.from_levels(m, levels[m]) for m in legs]
-            self.edge[r] = top_edge(books, r in self.exhaustive)
-        keep = {m for r in complete for m in self.groups[r].values()}
-        snap = Snapshot(dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-                        [{"id": m, "title": self.markets[m]["title"]} for m in sorted(keep)],
-                        {m: levels[m] for m in keep})
-        stats = {"races": len(races), "complete": len(complete), "complete_races": complete, "books": len(ids),
-                 "failed_books": len(ids) - len(levels), "hot": len(self.hot()),
-                 "seconds": round(time.time() - t0, 1), "rate_limited": bool(limited),
-                 "paused_s": round(self.paused_for(), 1)}
-        return snap, stats
+        """Whole pass at once: a snapshot of only the races completed in it."""
+        stats: dict = {}
+        markets, levels = [], {}
+        for _, snap in self.stream(full, stats):
+            markets += snap.markets
+            levels.update(snap.levels)
+        return Snapshot(dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                        sorted(markets, key=lambda m: m["id"]), levels), stats

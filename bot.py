@@ -98,7 +98,8 @@ def preview(cli: Client, r: ArbResult) -> list:
 
 
 def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: float = 0.005,
-            fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None) -> dict:
+            fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None,
+            pre_quote: bool = False) -> dict:
     """Leg the arb: thinnest leg first; later legs sized to actual fill; last leg
     may chase up to `chase_ticks` but never past break-even. Stops before any leg
     if the kill switch is engaged, and on any order whose outcome is unknown."""
@@ -114,7 +115,9 @@ def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: f
             be = breakeven_limit(r.direction, vwaps, fee, len(plan))
             c = chase_ticks * tick
             limit = max(be, limit - c) if yes_side == "SELL" else min(be, limit + c)
-        if live:
+        # The quote endpoint only previews collateral; it costs a round trip per leg,
+        # so it is opt-in (--pre-quote). The limit price already bounds the fill.
+        if live and pre_quote:
             try:
                 for o in sig_client.orders_for(yes_side, limit, target):
                     cli.quote(leg["exchange_id"], o["orderType"], o["priceLimit"], o["quantity"])
@@ -243,6 +246,8 @@ def main():
     ap.add_argument("--concurrency", type=int, default=6,
                     help="parallel book requests (SIG returns 429 above its limit)")
     ap.add_argument("--refresh-universe", type=float, default=1800, help="sec between market-list refreshes")
+    ap.add_argument("--pre-quote", action="store_true", help="call the quote endpoint before each leg (slower)")
+    ap.add_argument("--balance-every", type=float, default=60, help="sec between balance refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
@@ -261,6 +266,7 @@ def main():
     log.info("mode=%s live=%s markets=%d max_gross=%g max_per_race=%g min_edge=%g",
              a.mode, a.live, len(markets), a.max_gross, a.max_per_race, a.min_edge)
 
+    balance, balance_at = None, 0.0
     while True:
         t0 = time.time()
         blockers = live_blockers(a, limits, cli=cli)
@@ -272,48 +278,53 @@ def main():
             if time.time() - last_universe > a.refresh_universe:
                 scanner.set_markets(fast_scan.load_markets(cli, refresh=True))
                 last_universe = time.time()
-            # Only races whose every book was read this tick are in `snap`.
-            snap, scan = scanner.tick(full=full_sweep)
+            if not a.budget and time.time() - balance_at > a.balance_every and not scanner.paused_for():
+                balance, balance_at = cli.balance() or balance, time.time()
+            budget = a.budget or balance or 100_000
+            scan = {}
+            # Each race is evaluated, and traded, as soon as all its books arrive.
+            for race, snap in scanner.stream(full=full_sweep, stats=scan):
+                sigs, near, titles = generate(snap, a, exhaustive, budget)
+                fresh = [s for s in sigs if sig_key(s) not in seen]
+                seen = {k for k in seen if k[0] != race} | {sig_key(s) for s in sigs}
+                counts["signals"] += len(fresh)
+                if fresh:
+                    print(render(snap, fresh, near, titles, budget))
+                    log_csv(snap, fresh)
+                for r in fresh:
+                    if a.mode == "signal":
+                        continue
+                    if kill_switch_engaged():
+                        log.warning("kill switch engaged; not executing %s", r.race)
+                        counts["skipped"] += 1
+                        continue
+                    ok, why = risk.ok(r)
+                    if not ok:
+                        log.info("skip %s (%s)", r.race, why)
+                        counts["skipped"] += 1
+                        continue
+                    if a.mode == "confirm":
+                        print("\n".join(tickets(r, titles)))
+                        if input(f"Execute {r.race} {r.direction} x{r.qty:g} "
+                                 f"(pnl {r.pnl:.2f}) {'LIVE' if live else 'DRY RUN'}? [y/N] ").strip().lower() != "y":
+                            continue
+                    res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
+                                  pre_quote=a.pre_quote)
+                    risk.book(r, res)
+                    journal(r, res, a.mode, live)
+                    counts["executed"] += 1
+                    last_exec = {"race": r.race, "status": res["status"], "live": live,
+                                 "book_age_s": round(time.time() - t0, 1)}
+                    log.info("EXEC %s -> %s", r.race, json.dumps(res))
+                    if live and res["status"] in HALT_STATUSES:
+                        engage_kill_switch(f"{res['status']} on {r.race} (run {res.get('run_id')}): "
+                                           f"{res.get('action') or 'operator review required'}")
+                        log.error("kill switch engaged after %s on %s", res["status"], r.race)
+            scan.pop("complete_races", None)
             if scan.get("rate_limited"):
                 log.warning("SIG rate limit (429): pausing scans %.0fs", scan["paused_s"])
-            elif scan["complete"]:
+            elif scan.get("complete"):
                 full_sweep = False
-            budget = a.budget or (cli.balance() if snap.markets else None) or 100_000
-            sigs, near, titles = generate(snap, a, exhaustive, budget)
-            scanned = set(scan.pop("complete_races"))
-            fresh = [s for s in sigs if sig_key(s) not in seen]
-            seen = {k for k in seen if k[0] not in scanned} | {sig_key(s) for s in sigs}
-            counts["signals"] += len(fresh)
-            if fresh:
-                print(render(snap, fresh, near, titles, budget))
-                log_csv(snap, fresh)
-            for r in fresh:
-                if a.mode == "signal":
-                    continue
-                if kill_switch_engaged():
-                    log.warning("kill switch engaged; not executing %s", r.race)
-                    counts["skipped"] += 1
-                    continue
-                ok, why = risk.ok(r)
-                if not ok:
-                    log.info("skip %s (%s)", r.race, why)
-                    counts["skipped"] += 1
-                    continue
-                if a.mode == "confirm":
-                    print("\n".join(tickets(r, titles)))
-                    if input(f"Execute {r.race} {r.direction} x{r.qty:g} "
-                             f"(pnl {r.pnl:.2f}) {'LIVE' if live else 'DRY RUN'}? [y/N] ").strip().lower() != "y":
-                        continue
-                res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee)
-                risk.book(r, res)
-                journal(r, res, a.mode, live)
-                counts["executed"] += 1
-                last_exec = {"race": r.race, "status": res["status"], "live": live}
-                log.info("EXEC %s -> %s", r.race, json.dumps(res))
-                if live and res["status"] in HALT_STATUSES:
-                    engage_kill_switch(f"{res['status']} on {r.race} (run {res.get('run_id')}): "
-                                       f"{res.get('action') or 'operator review required'}")
-                    log.error("kill switch engaged after %s on %s", res["status"], r.race)
         except KeyboardInterrupt:
             raise
         except Exception as e:

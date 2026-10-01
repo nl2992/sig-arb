@@ -102,6 +102,35 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(get.call_count, 1)
         self.assertEqual(ctx.exception.retry_after, 30.0)
 
+    def test_stream_yields_each_race_with_only_its_books(self):
+        sc = self.scanner(FakeCli({1: 0.51, 2: 0.50}))
+        stats, got = {}, []
+        for race, snap in sc.stream(full=True, stats=stats):
+            ids = sorted(snap.levels)
+            self.assertEqual(ids, sorted(m["id"] for m in snap.markets))
+            self.assertEqual(len(ids), 2)
+            got.append(race)
+        self.assertEqual(sorted(got), sorted(RACES))
+        self.assertEqual(stats["complete"], 6)
+        self.assertAlmostEqual(sc.edge["State0 Senate"], 0.01)
+
+    def test_stream_trades_can_start_before_the_pass_ends(self):
+        # A slow book in the last race must not delay the first race being yielded.
+        import threading
+        release = threading.Event()
+
+        class Slow(FakeCli):
+            def levels(self, mid):
+                if mid == 52:
+                    release.wait(5)
+                return super().levels(mid)
+        sc = self.scanner(Slow({}))
+        gen = sc.stream(full=True)
+        first, _ = next(gen)
+        self.assertNotEqual(first, "State5 Senate")
+        release.set()
+        list(gen)
+
     def test_top_edge(self):
         from arb_engine import Book
         books = [Book.from_levels(1, levels(0.51)), Book.from_levels(2, levels(0.50))]
