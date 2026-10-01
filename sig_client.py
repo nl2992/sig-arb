@@ -35,6 +35,14 @@ DEFAULT_TOURNAMENT = "bda92870-621e-47b0-bc3c-3602c5c26f55"
 PLACE_PAYLOAD_CONFIRMED = True
 
 
+class RateLimited(RuntimeError):
+    """SIG (Vercel) answered 429. Callers must back off; never retry immediately."""
+
+    def __init__(self, path: str, retry_after: float | None = None):
+        super().__init__(f"{path} -> 429 Too Many Requests")
+        self.retry_after = retry_after
+
+
 def load_env(path: str | os.PathLike = None) -> None:
     """Minimal .env loader (no python-dotenv dependency)."""
     p = pathlib.Path(path or pathlib.Path(__file__).with_name(".env"))
@@ -75,6 +83,12 @@ class Client:
             r = self.s.get(BASE + path, params=params, timeout=self.timeout)
         except (requests.Timeout, requests.ConnectionError):
             r = self.s.get(BASE + path, params=params, timeout=self.timeout)
+        if r.status_code == 429:
+            try:
+                retry_after = float(r.headers.get("Retry-After"))
+            except (TypeError, ValueError):
+                retry_after = None
+            raise RateLimited(path, retry_after)
         if r.status_code in (401, 403):
             raise PermissionError(f"{path} -> {r.status_code}. Is SIG_COOKIE set / still valid?")
         r.raise_for_status()
@@ -92,7 +106,21 @@ class Client:
 
     # ---------------------------------------------------------------- read
     def markets(self) -> List[dict]:
-        out, off = [], 0
+        """Every market. Pages are ~20 markets and slow, so once the first page reports
+        totalMarkets the remaining offsets are fetched in parallel."""
+        first = self._get("/api/markets/page-data", offset=0)
+        out, total, step = list(first["markets"]), first.get("totalMarkets"), len(first["markets"])
+        if isinstance(total, int) and step and first.get("nextOffset") == step:
+            offsets = list(range(step, total, step))
+            with ThreadPoolExecutor(self.concurrency) as ex:
+                for j in ex.map(lambda o: self._get("/api/markets/page-data", offset=o), offsets):
+                    out += j["markets"]
+            seen, uniq = set(), []
+            for m in out:
+                if m["id"] not in seen:
+                    seen.add(m["id"]); uniq.append(m)
+            return uniq
+        off = first.get("nextOffset") if first["markets"] else None
         while off is not None:
             j = self._get("/api/markets/page-data", offset=off)
             out += j["markets"]

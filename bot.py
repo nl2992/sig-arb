@@ -33,6 +33,7 @@ import time
 import uuid
 
 from arb_engine import ArbResult, breakeven_limit
+import fast_scan
 import gates
 import sig_client
 from sig_client import Client
@@ -236,14 +237,23 @@ def main():
     ap.add_argument("--chase-ticks", type=int, default=2)
     ap.add_argument("--near", type=int, default=0)
     ap.add_argument("--limits", type=pathlib.Path, default=RISK_LIMITS)
+    ap.add_argument("--hot-band", type=float, default=0.005,
+                    help="re-read every tick races whose top-of-book edge is within this of an arb")
+    ap.add_argument("--sweep-races", type=int, default=8, help="cold races re-read per tick (rotating)")
+    ap.add_argument("--concurrency", type=int, default=6,
+                    help="parallel book requests (SIG returns 429 above its limit)")
+    ap.add_argument("--refresh-universe", type=float, default=1800, help="sec between market-list refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     limits = gates.load_limits(a.limits)     # malformed limits -> refuse to start
     apply_limits(a, limits)
-    cli = Client()
-    markets = cli.markets()
+    cli = Client(concurrency=a.concurrency)
+    markets = fast_scan.load_markets(cli)
     exhaustive = load_exhaustive()
+    scanner = fast_scan.TieredScanner(cli, markets, exhaustive, hot_band=a.hot_band,
+                                      sweep_races=a.sweep_races, concurrency=a.concurrency)
+    last_universe, full_sweep, scan = time.time(), True, {}
     risk = Risk(a)
     seen = set()
     counts = {"signals": 0, "executed": 0, "skipped": 0}
@@ -259,11 +269,20 @@ def main():
             log.warning("orders are DRY RUN: %s", "; ".join(blockers))
         error = None
         try:
-            budget = a.budget or cli.balance() or 100_000
-            snap = Snapshot.fetch(cli, markets)
+            if time.time() - last_universe > a.refresh_universe:
+                scanner.set_markets(fast_scan.load_markets(cli, refresh=True))
+                last_universe = time.time()
+            # Only races whose every book was read this tick are in `snap`.
+            snap, scan = scanner.tick(full=full_sweep)
+            if scan.get("rate_limited"):
+                log.warning("SIG rate limit (429): pausing scans %.0fs", scan["paused_s"])
+            elif scan["complete"]:
+                full_sweep = False
+            budget = a.budget or (cli.balance() if snap.markets else None) or 100_000
             sigs, near, titles = generate(snap, a, exhaustive, budget)
+            scanned = set(scan.pop("complete_races"))
             fresh = [s for s in sigs if sig_key(s) not in seen]
-            seen = {sig_key(s) for s in sigs}
+            seen = {k for k in seen if k[0] not in scanned} | {sig_key(s) for s in sigs}
             counts["signals"] += len(fresh)
             if fresh:
                 print(render(snap, fresh, near, titles, budget))
@@ -305,7 +324,8 @@ def main():
                      payload_confirmed=sig_client.PLACE_PAYLOAD_CONFIRMED,
                      interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
                      max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
-                     last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left())
+                     last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left(),
+                     scan=scan)
         time.sleep(max(0.0, a.interval - (time.time() - t0)))
 
 
