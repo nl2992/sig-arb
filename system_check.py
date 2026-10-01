@@ -25,7 +25,7 @@ def _age(snapshot: Snapshot) -> float:
 
 def readiness(*, snapshot_path=None, public=False, public_limit=0,
               targeted=False,
-              matches_path=ROOT / "fixtures/crossvenue/matches.json",
+              matches_path=ROOT / "config/market_matches.json",
               news_path=ROOT / "config/news_circuit_breakers.json") -> dict:
     checks = {}
     try:

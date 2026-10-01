@@ -70,7 +70,7 @@ def _read_history(path=ROOT / 'logs' / 'crossvenue-history.jsonl'):
     return rows
 
 
-def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'fixtures/crossvenue/matches.json'):
+def _crossvenue_report(snapshot, payload, matches_path=ROOT / 'config/market_matches.json'):
     payload = payload or {}
     observations = [PriceObservation(**row)
                     for venue in payload.values()

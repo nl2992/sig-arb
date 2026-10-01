@@ -141,7 +141,7 @@ def main(argv=None):
     scan.add_argument("--min-move-pp", type=float, default=5.0)
     scan.add_argument("--lookback-minutes", type=int, default=120)
     live = sub.add_parser("live", help="run a read-only combined SIG/venue scan")
-    live.add_argument("--matches", default=str(ROOT / "fixtures/crossvenue/matches.json"))
+    live.add_argument("--matches", default=str(ROOT / "config/market_matches.json"))
     live.add_argument("--history", type=pathlib.Path, default=ROOT / "logs/crossvenue-history.jsonl")
     live.add_argument("--interval", type=float, default=60.0)
     live.add_argument("--once", action="store_true", help="run one cycle and exit")

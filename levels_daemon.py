@@ -16,7 +16,7 @@ from signals import Snapshot
 ROOT = pathlib.Path(__file__).parent
 
 
-def run_cycle(db: LevelsDB, *, snapshot_path=None, matches_path=ROOT / "fixtures/crossvenue/matches.json",
+def run_cycle(db: LevelsDB, *, snapshot_path=None, matches_path=ROOT / "config/market_matches.json",
               alert_path=ROOT / "logs/levels-alerts.jsonl", min_move_pp=5.0,
               max_snapshot_age=30.0) -> dict:
     payload = fetch_public(["kalshi", "polymarket"], market_ids=load_targeted_market_ids(ROOT / "docs/market-links.csv"))
@@ -49,7 +49,7 @@ def main(argv=None):
     parser.add_argument("--db", type=pathlib.Path, default=ROOT / "logs/levels.sqlite3")
     parser.add_argument("--alert-file", type=pathlib.Path, default=ROOT / "logs/levels-alerts.jsonl")
     parser.add_argument("--snapshot", type=pathlib.Path, default=ROOT / "logs/browser_snapshot.json")
-    parser.add_argument("--matches", type=pathlib.Path, default=ROOT / "fixtures/crossvenue/matches.json")
+    parser.add_argument("--matches", type=pathlib.Path, default=ROOT / "config/market_matches.json")
     parser.add_argument("--interval", type=float, default=60.0)
     parser.add_argument("--min-move-pp", type=float, default=5.0)
     parser.add_argument("--max-snapshot-age", type=float, default=30.0)

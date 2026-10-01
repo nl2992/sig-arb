@@ -180,7 +180,7 @@ def mapping_view(source):
     except (OSError, ValueError):
         pass
     try:
-        registry = load_registry(Path(__file__).parent / "fixtures/crossvenue/matches.json")
+        registry = load_registry(Path(__file__).parent / "config/market_matches.json")
     except (OSError, ValueError):
         registry = []
     approved = {(m.sig_market_id, m.reference_venue, m.reference_market_id): m for m in registry}
