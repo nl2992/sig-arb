@@ -78,6 +78,16 @@ How execution works:
   `MISS`, `ABORT`, `KILLED` or `UNKNOWN`. The dashboard's **Automated execution** panel
   shows this tape, the bot heartbeat (`logs/bot_status.json`) and why orders are dry-run.
 
+### Session renewal (give the bot its own login)
+SIG's access token lasts one hour. `bot.py` renews it ~10 min before expiry with the
+cookie's refresh token, exactly as the browser does, and writes the new session to `.env`
+at once. Supabase rotates refresh tokens, so the bot and a browser must **not** share a
+login (each would retire the other's token and Supabase may end the session). Once:
+1. Open a private/incognito window and sign in to sig.thesuper.market there.
+2. Run `python go_live.py set-cookie`, then `copy(document.cookie)` in that window's console.
+3. Close the private window **without logging out** (logging out ends the bot's session).
+Keep using your normal window as usual.
+
 ## 4. Stage 3: fully systematic
 ```bash
 python bot.py --mode auto --live --interval 3 --min-edge-3leg 0.01 --cooldown 30

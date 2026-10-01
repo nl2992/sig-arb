@@ -16,6 +16,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import urllib.parse
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,11 @@ import requests
 from arb_engine import Book
 
 BASE = "https://sig.thesuper.market"
+ENV_PATH = pathlib.Path(__file__).with_name(".env")
+# Public Supabase project key (role "anon"), read once from the site's JS and cached.
+SUPABASE_PUBLIC = pathlib.Path(__file__).with_name("logs") / "supabase_public.json"
+# @supabase/ssr splits cookies longer than this into .0, .1, ... chunks.
+COOKIE_CHUNK = 3180
 DEFAULT_TOURNAMENT = "bda92870-621e-47b0-bc3c-3602c5c26f55"
 
 # The payload below matches the site's own order builder (read from the JS bundle
@@ -67,8 +73,59 @@ class Client:
         if self.cookie:
             self.s.headers["Cookie"] = self.cookie
         sess = decode_supabase_cookie(self.cookie) if self.cookie else {}
+        self.session = sess
         self.access_token = os.environ.get("SIG_ACCESS_TOKEN") or sess.get("access_token")
         self.profile_id = os.environ.get("SIG_PROFILE_ID") or (sess.get("user") or {}).get("id")
+        # Renewal needs the cookie's refresh token; a pinned SIG_ACCESS_TOKEN opts out.
+        self.can_refresh = bool(sess.get("refresh_token") and not os.environ.get("SIG_ACCESS_TOKEN"))
+
+    # ------------------------------------------------------------ session
+    def supabase_ref(self) -> str | None:
+        for c in self.cookie.split(";"):
+            k = c.strip().split("=", 1)[0]
+            if k.startswith("sb-") and "-auth-token" in k:
+                return k[3:k.index("-auth-token")]
+        return None
+
+    def supabase_anon_key(self, ref: str, cache: pathlib.Path = None) -> str:
+        """The site's public anon key for project `ref` (cached; found in its JS bundle)."""
+        cache = cache or SUPABASE_PUBLIC
+        try:
+            j = json.loads(cache.read_text())
+            if j.get("ref") == ref and j.get("anon_key"):
+                return j["anon_key"]
+        except (OSError, ValueError):
+            pass
+        html = self.s.get(BASE + "/", timeout=self.timeout).text
+        for src in sorted(set(re.findall(r'/_next/static/[^"\']+\.js', html))):
+            js = self.s.get(BASE + src, timeout=self.timeout).text
+            for tok in re.findall(r"eyJ[\w-]{10,}\.eyJ[\w-]{20,}\.[\w-]{10,}", js):
+                claims = jwt_claims(tok)
+                if claims.get("role") == "anon" and claims.get("ref") == ref:
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    cache.write_text(json.dumps({"ref": ref, "anon_key": tok}))
+                    return tok
+        raise RuntimeError("Supabase anon key not found in the site bundle")
+
+    def refresh_session(self, env_path: pathlib.Path = None) -> float | None:
+        """Swap the refresh token for a new session, as the browser does hourly.
+        Supabase rotates refresh tokens, so the new session is written to .env at once;
+        a restart must never reuse the retired token. Returns token seconds left."""
+        if not self.can_refresh:
+            raise PermissionError("no refresh token in SIG_COOKIE (or SIG_ACCESS_TOKEN is pinned)")
+        ref = self.supabase_ref()
+        r = requests.post(f"https://{ref}.supabase.co/auth/v1/token", params={"grant_type": "refresh_token"},
+                          json={"refresh_token": self.session["refresh_token"]}, timeout=self.timeout,
+                          headers={"apikey": self.supabase_anon_key(ref), "Content-Type": "application/json"})
+        if r.status_code != 200:
+            raise PermissionError(f"session refresh failed ({r.status_code}): {r.text[:200]}")
+        sess = r.json()
+        self.session, self.access_token = sess, sess["access_token"]
+        self.profile_id = (sess.get("user") or {}).get("id") or self.profile_id
+        self.cookie = replace_session_cookie(self.cookie, ref, sess)
+        self.s.headers["Cookie"] = self.cookie
+        save_env_value("SIG_COOKIE", self.cookie, env_path or ENV_PATH)
+        return self.token_seconds_left()
 
     def token_seconds_left(self) -> float | None:
         """Seconds until the access token's JWT `exp`; None when absent or unreadable.
@@ -287,6 +344,32 @@ def jwt_claims(token: str) -> dict:
     except (IndexError, ValueError, AttributeError):
         return {}
     return claims if isinstance(claims, dict) else {}
+
+
+def replace_session_cookie(cookie_header: str, ref: str, session: dict) -> str:
+    """Cookie header with the sb-<ref>-auth-token cookie(s) replaced by `session`,
+    encoded and chunked the way @supabase/ssr does."""
+    name = f"sb-{ref}-auth-token"
+    keep = [c.strip() for c in cookie_header.split(";")
+            if c.strip() and not c.strip().split("=", 1)[0].startswith(name)]
+    value = "base64-" + base64.urlsafe_b64encode(json.dumps(session, separators=(",", ":")).encode()).decode().rstrip("=")
+    if len(value) <= COOKIE_CHUNK:
+        parts = [f"{name}={value}"]
+    else:
+        parts = [f"{name}.{i}={value[o:o + COOKIE_CHUNK]}" for i, o in enumerate(range(0, len(value), COOKIE_CHUNK))]
+    return "; ".join(keep + parts)
+
+
+def save_env_value(key: str, value: str, env_path: pathlib.Path) -> None:
+    """Set KEY=value in .env (other lines kept), atomically, mode 600."""
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    lines = [l for l in lines if not l.strip().startswith(key + "=")]
+    lines.insert(0, f"{key}={value}")
+    tmp = env_path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.chmod(0o600)
+    tmp.replace(env_path)
+    os.environ[key] = value
 
 
 def decode_supabase_cookie(cookie_header: str) -> dict:

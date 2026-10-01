@@ -129,3 +129,64 @@ class ClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionRefreshTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile, pathlib
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        (self.dir / "anon.json").write_text(json.dumps({"ref": "abc", "anon_key": "ANON"}))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_refresh_rotates_session_cookie_and_env(self):
+        c = client()
+        self.assertTrue(c.can_refresh)
+        self.assertEqual(c.supabase_ref(), "abc")
+        new = {"access_token": "AT2", "refresh_token": "RT2", "user": {"id": "86ccda88"}}
+        env = self.dir / ".env"
+        env.write_text("SIG_COOKIE=old\nSIG_TOURNAMENT=t\n")
+        with mock.patch.object(sig_client, "SUPABASE_PUBLIC", self.dir / "anon.json"), \
+                mock.patch.object(sig_client.requests, "post", return_value=Resp(200, new)) as post, \
+                mock.patch.dict(os.environ, {}, clear=False):
+            c.refresh_session(env_path=env)
+        url = post.call_args.args[0]
+        self.assertEqual(url, "https://abc.supabase.co/auth/v1/token")
+        self.assertEqual(post.call_args.kwargs["params"], {"grant_type": "refresh_token"})
+        self.assertEqual(post.call_args.kwargs["json"], {"refresh_token": "RT"})
+        self.assertEqual(post.call_args.kwargs["headers"]["apikey"], "ANON")
+        self.assertEqual(c.access_token, "AT2")
+        self.assertEqual(decode_supabase_cookie(c.cookie)["refresh_token"], "RT2")
+        self.assertIn("foo=1", c.cookie)                         # other cookies kept
+        self.assertEqual(c.s.headers["Cookie"], c.cookie)
+        lines = env.read_text().splitlines()
+        self.assertEqual(decode_supabase_cookie(lines[0][len("SIG_COOKIE="):])["access_token"], "AT2")
+        self.assertIn("SIG_TOURNAMENT=t", lines)
+        self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+
+    def test_failed_refresh_keeps_old_session(self):
+        c = client()
+        env = self.dir / ".env"
+        with mock.patch.object(sig_client, "SUPABASE_PUBLIC", self.dir / "anon.json"), \
+                mock.patch.object(sig_client.requests, "post", return_value=Resp(400, {"error": "invalid_grant"})):
+            with self.assertRaises(PermissionError):
+                c.refresh_session(env_path=env)
+        self.assertEqual(c.access_token, "AT")
+        self.assertFalse(env.exists())
+
+    def test_large_sessions_are_chunked_like_supabase_ssr(self):
+        big = {"access_token": "x" * 5000, "refresh_token": "r"}
+        cookie = sig_client.replace_session_cookie("a=1; sb-abc-auth-token=old", "abc", big)
+        self.assertIn("sb-abc-auth-token.0=", cookie)
+        self.assertIn("sb-abc-auth-token.1=", cookie)
+        self.assertNotIn("sb-abc-auth-token=old", cookie)
+        self.assertEqual(decode_supabase_cookie(cookie)["access_token"], "x" * 5000)
+
+    def test_pinned_access_token_disables_refresh(self):
+        env = {k: v for k, v in os.environ.items() if k != "SIG_COOKIE"}
+        env["SIG_ACCESS_TOKEN"] = "pinned"
+        with mock.patch.object(sig_client, "load_env"), mock.patch.dict(os.environ, env, clear=True):
+            c = Client(cookie=COOKIE)
+        self.assertFalse(c.can_refresh)

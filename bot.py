@@ -48,6 +48,8 @@ RISK_LIMITS = HERE / "config" / "risk_limits.json"
 HALT_STATUSES = {"UNKNOWN", "LEGGED", "IMBALANCED"}
 # Live orders stop this long before the SIG access token expires.
 TOKEN_MARGIN_S = 300
+# The bot renews its own session this long before expiry (needs its own login; README).
+REFRESH_AHEAD_S = 600
 
 
 def kill_switch_engaged(path: pathlib.Path = None) -> bool:
@@ -337,6 +339,13 @@ def main():
     balance, balance_at = None, 0.0
     while True:
         t0 = time.time()
+        left = cli.token_seconds_left()
+        if cli.can_refresh and left is not None and left < REFRESH_AHEAD_S:
+            try:
+                left = cli.refresh_session()
+                log.info("SIG session renewed; token valid %.0f min", (left or 0) / 60)
+            except Exception as e:
+                log.error("SIG session renewal failed: %s", e)
         blockers = live_blockers(a, limits, cli=cli)
         live = a.mode != "signal" and not blockers
         if a.mode != "signal" and a.live and blockers:
