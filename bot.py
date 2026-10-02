@@ -36,6 +36,7 @@ import uuid
 from typing import Optional
 
 from arb_engine import ArbResult, Book, breakeven_limit, group_markets, max_executable_arb
+import conviction
 import fair_value
 import fast_scan
 import gates
@@ -342,7 +343,8 @@ def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
 
 
 def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, risk=None,
-                   holdings: dict = None, skip: set = frozenset(), touched: set = None) -> dict:
+                   holdings: dict = None, skip: set = frozenset(), touched: set = None,
+                   skip_entries: set = frozenset()) -> dict:
     """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like).
     Room is the tightest of: account-wide exposure cap, fair-value cap, per-race cap
     (sibling markets are one bet), per-market cap; size scales with the gap."""
@@ -363,6 +365,8 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
                                       max_hold_s=getattr(a, "fv_max_hold", 0) or None)
         if not plan:
             continue
+        if not plan.get("exit") and m["id"] in skip_entries:
+            continue                           # another strategy works this market; exits still run
         out["fv_signals"] += 1
         kind = f"EXIT_{str(plan['exit']).upper()}" if plan.get("exit") else "ENTRY"
         desc = (f"FV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} "
@@ -436,6 +440,59 @@ def journal_single(strategy: str, market_id: int, yes_side: str, qty: float, pri
                                        "yes_side": yes_side, "price": price, **extra}}) + "\n")
 
 
+def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, a, live: bool, risk=None,
+                   holdings: dict = None, touched: set = None) -> dict:
+    """Enter / stop out conviction bets for the targets in one freshly read race."""
+    out = {"cv_signals": 0, "cv_orders": 0}
+    for m in snap.markets:
+        if m["id"] not in targets:
+            continue
+        book = Book.from_levels(m["id"], snap.levels[m["id"]])
+        gross_left = min(a.cv_max_gross - ledger.gross(),
+                         (a.max_gross - risk.gross) if risk is not None else float("inf"))
+        plan = conviction.plan(book, fair_of(m["id"]), ledger, min_edge=a.cv_min_edge, max_bet=a.cv_max_bet,
+                               gross_left=gross_left, stop=a.cv_stop, max_slip=getattr(a, "fv_max_slip", 0.03))
+        if not plan:
+            continue
+        out["cv_signals"] += 1
+        kind = "EXIT_STOP" if plan.get("exit") else "ENTRY"
+        desc = (f"CV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} @ {plan['limit']}"
+                f" (fair {plan['fair']}" + (f", edge {plan['edge']}, capital {plan['capital']})" if "edge" in plan else ")"))
+        if kill_switch_engaged() or a.mode != "auto":
+            log.info("not sending %s (%s)", desc, "kill switch" if kill_switch_engaged() else a.mode)
+            continue
+        if touched is not None:
+            touched.add(m["id"])
+        with critical():
+            coid = f"cv:{uuid.uuid4().hex[:12]}"
+            holding = holdings.get(m["id"], 0.0) if (live and holdings is not None) else 0.0
+            try:
+                resp = place_tracked(cli, "cv", m["id"], book.exchange_id, plan["yes_side"], plan["limit"],
+                                     plan["qty"], live, coid, holdings=holding)
+            except Exception as e:
+                log.error("cv order failed on #%s: %s", m["id"], e)
+                continue
+            fq, fp, oids = _fill_of(resp, plan["qty"], plan["limit"])
+            if fq < plan["qty"]:
+                for oid in oids:
+                    cli.cancel(oid, dry_run=not live)
+            if live and fq > 0:
+                ledger.record(m["id"], plan["yes_side"], fq, plan["limit"])
+                if holdings is not None:
+                    holdings[m["id"]] = holdings.get(m["id"], 0.0) + (fq if plan["yes_side"] == "BUY" else -fq)
+                if risk is not None:
+                    cost = fq * (plan["limit"] if plan["yes_side"] == "BUY" else 1 - plan["limit"])
+                    risk.gross += -cost if plan.get("exit") else cost
+            status = "UNKNOWN" if resp.get("_unknown") else ("DONE" if fq >= plan["qty"] else "PARTIAL" if fq else "MISS")
+            journal_single("cv", m["id"], plan["yes_side"], fq, plan["limit"], kind, live, plan=plan, status_=status,
+                           client_order_id=coid)
+            out["cv_orders"] += 1
+            log.info("%s -> %s filled %g", desc, status, fq)
+            if live and status == "UNKNOWN":
+                log.warning("cv order on #%s has an unknown outcome; holdings check will reconcile", m["id"])
+    return out
+
+
 def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=None, holdings: dict = None,
                 skip: set = frozenset(), touched: set = None) -> dict:
     """Lead-lag scalps for one freshly read race: exits first, then entries on reference moves."""
@@ -498,7 +555,9 @@ def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: di
         if m["id"] in skip:
             continue
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
-        other = ledgers["fv"].position(m["id"]) + ledgers["ll"].position(m["id"])
+        # MM keeps its own inventory books, so it may quote markets fair value holds; it stays
+        # out of lead-lag and conviction markets, whose exits must not compete with quotes.
+        other = ledgers["ll"].position(m["id"]) + ledgers["cv"].position(m["id"])
         fair = feed.mid(m["id"]) if feed is not None else None
         if fair is None and refs is not None:
             f_ = refs.fair(m["id"])
@@ -624,9 +683,9 @@ def main():
     ap.add_argument("--fv-unit", type=float, default=500,
                     help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
     ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
-    ap.add_argument("--fv-max-gross", type=float, default=60000,
+    ap.add_argument("--fv-max-gross", type=float, default=45000,
                     help="fv: cap on fair-value capital (leaves room for ll/mm under the venue cap)")
-    ap.add_argument("--fv-tp", type=float, default=0.03, help="fv: take profit vs entry")
+    ap.add_argument("--fv-tp", type=float, default=0.015, help="fv: take profit vs entry")
     ap.add_argument("--fv-stop", type=float, default=0.05,
                     help="fv: exit if the reference fair moves this far against the entry")
     ap.add_argument("--fv-max-slip", type=float, default=0.03, help="fv: stop/time exits only within this of fair")
@@ -643,12 +702,20 @@ def main():
     ap.add_argument("--ll-stop", type=float, default=0.03, help="ll: stop loss vs entry")
     ap.add_argument("--ll-max-hold", type=float, default=2700, help="ll: time stop, sec")
     ap.add_argument("--mm-edge", type=float, default=0.01, help="mm: quote at least this far from fair")
-    ap.add_argument("--mm-size", type=float, default=300, help="mm: shares per quote")
+    ap.add_argument("--mm-size", type=float, default=400, help="mm: shares per quote")
     ap.add_argument("--mm-max-inventory", type=float, default=1000, help="mm: shares per market")
     ap.add_argument("--mm-take", type=float, default=0.01, help="mm: exit profit vs entry")
     ap.add_argument("--mm-max-hold", type=float, default=1800, help="mm: after this, exit at fair")
-    ap.add_argument("--mm-min-spread", type=float, default=0.02, help="mm: only quote SIG spreads this wide")
-    ap.add_argument("--mm-max-markets", type=int, default=8)
+    ap.add_argument("--mm-min-spread", type=float, default=0.015, help="mm: only quote SIG spreads this wide")
+    ap.add_argument("--mm-max-markets", type=int, default=15)
+    ap.add_argument("--cv-max-bets", type=int, default=6, help="cv: concurrent conviction bets")
+    ap.add_argument("--cv-max-bet", type=float, default=4000, help="cv: capital per bet")
+    ap.add_argument("--cv-max-gross", type=float, default=24000, help="cv: total capital")
+    ap.add_argument("--cv-min-edge", type=float, default=0.02, help="cv: SIG vs fair gap to enter")
+    ap.add_argument("--cv-min-fair", type=float, default=0.15, help="cv: only races with fair at or above")
+    ap.add_argument("--cv-max-fair", type=float, default=0.85, help="cv: only races with fair at or below")
+    ap.add_argument("--cv-stop", type=float, default=0.10, help="cv: exit if the consensus moves this far against")
+    ap.add_argument("--cv-refresh", type=float, default=120, help="cv: sec between target re-ranking")
     ap.add_argument("--mm-min-price", type=float, default=0.10, help="mm: only quote fair values at or above")
     ap.add_argument("--mm-max-price", type=float, default=0.90, help="mm: only quote fair values at or below")
     ap.add_argument("--mm-poll", type=float, default=20, help="mm: sec between open-order/fill syncs")
@@ -673,13 +740,14 @@ def main():
              a.mode, a.live, len(markets), a.max_gross, a.max_per_race, a.min_edge)
 
     strategies = {x.strip() for x in a.strategy.split(",") if x.strip()}
-    if not strategies <= {"arb", "fv", "ll", "mm"}:
+    if not strategies <= {"arb", "cv", "fv", "ll", "mm"}:
         raise SystemExit(f"unknown --strategy {a.strategy}")
     refs = None
     ledger = fair_value.Ledger()            # also needed to reconcile holdings when fv is off
     ll_ledger = fair_value.Ledger(HERE / "logs" / "ll_positions.json")
     mm_ledger = fair_value.Ledger(HERE / "logs" / "mm_positions.json")
-    ledgers = {"fv": ledger, "ll": ll_ledger, "mm": mm_ledger}
+    cv_ledger = fair_value.Ledger(HERE / "logs" / "cv_positions.json")
+    ledgers = {"fv": ledger, "ll": ll_ledger, "mm": mm_ledger, "cv": cv_ledger}
     checker = holdings_check.HoldingsCheck(ledgers, lambda why: engage_kill_switch(why, actor="holdings_check"),
                                            intent_log=INTENT_LOG, exec_log=EXEC_LOG)
     acct = {}                                # market_id -> signed YES holding (minute snapshot)
@@ -713,7 +781,7 @@ def main():
                                  min_price=a.mm_min_price, max_price=a.mm_max_price)
         mm.enabled = False                   # until the live self-test passes (in the worker)
     worker_live = {"live": False}
-    if strategies & {"fv", "mm"}:
+    if strategies & {"fv", "mm", "cv"}:
         refs = fair_value.ReferencePrices()
         log.info("reference prices: %d approved mappings; first refresh...", len(refs.matches))
         refs.refresh()
@@ -740,6 +808,13 @@ def main():
     if mm is not None:
         mm.start_worker(lambda: others_expected("mm"), kill_switch_engaged, on_fill=mm_fill, poll_s=a.mm_poll)
 
+    def fair_of(m_):
+        f_ = feed.mid(m_) if feed is not None else None
+        if f_ is None and refs is not None:
+            f_ = (refs.fair(m_) or {}).get("fair")
+        return f_
+
+    cv_targets, cv_ranked_at = {}, 0.0
     balance, balance_at = None, 0.0
     book_cache = {}
     live = False
@@ -787,11 +862,6 @@ def main():
                         if not rep["ok"]:
                             log.warning("holdings check: %s", json.dumps(rep))
                         try:                           # dashboard positions & P&L, no extra SIG calls
-                            def fair_of(m_):
-                                f_ = feed.mid(m_) if feed is not None else None
-                                if f_ is None and refs is not None:
-                                    f_ = (refs.fair(m_) or {}).get("fair")
-                                return f_
                             positions.write(positions.build(port, ledgers, fair_of))
                         except Exception as e:
                             log.warning("positions report failed: %s", e)
@@ -808,6 +878,15 @@ def main():
                     if mm is not None:
                         hot_mkts |= mm.active_snapshot
                     scanner.boost = {r for r in map(scanner.race_of, hot_mkts) if r}
+                if "cv" in strategies and time.time() - cv_ranked_at > a.cv_refresh and book_cache:
+                    cv_targets = conviction.pick_targets(
+                        {mid_: Book.from_levels(mid_, lv) for mid_, (_, lv, _) in book_cache.items()},
+                        {mid_: mk["title"] for mid_, (mk, _, _) in book_cache.items()}, fair_of, cv_ledger,
+                        min_edge=a.cv_min_edge, min_fair=a.cv_min_fair, max_fair=a.cv_max_fair,
+                        max_bets=a.cv_max_bets)
+                    cv_ranked_at = time.time()
+                    if feed is not None or True:
+                        scanner.boost |= {r for r in map(scanner.race_of, cv_targets) if r}
                 # Each race is evaluated, and traded, as soon as all its books arrive.
                 for race, snap in scanner.stream(full=full_sweep, stats=scan):
                     for m in snap.markets:
@@ -874,6 +953,10 @@ def main():
                         continue
                     touched = set()
                     mm_busy = set(mm.active_snapshot) if mm is not None else set()
+                    if "cv" in strategies:
+                        for k, v in run_conviction(cli, snap, cv_targets, fair_of, cv_ledger, a, live, risk, acct,
+                                                   touched).items():
+                            counts[k] = counts.get(k, 0) + v
                     if "ll" in strategies:
                         for k, v in run_leadlag(cli, snap, feed, ll_ledger, a, live, risk, acct,
                                                 skip=mm_busy | {int(k) for k, r in ledger.rows.items() if r.get("qty")},
@@ -881,7 +964,8 @@ def main():
                             counts[k] = counts.get(k, 0) + v
                     if "fv" in strategies:
                         fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk, acct,
-                                                   skip=mm_busy | touched, touched=touched)
+                                                   skip=touched, touched=touched,
+                                                   skip_entries=mm_busy | set(cv_targets))
                         for k, v in fv_counts.items():
                             counts[k] = counts.get(k, 0) + v
                     if mm is not None and live and not kill_switch_engaged():
@@ -904,6 +988,8 @@ def main():
                          max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
                          last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left(),
                          scan=scan, strategies=sorted(strategies), holdings_check=checker.last,
+                     cv={"gross": round(cv_ledger.gross(), 2), "bets": sum(1 for r in cv_ledger.rows.values() if r.get("qty")),
+                         "targets": {str(k): v for k, v in cv_targets.items()}},
                      ll={"gross": round(ll_ledger.gross(), 2), "positions": sum(1 for r in ll_ledger.rows.values() if r.get("qty")),
                          "realized": round(sum(r.get("realized", 0) for r in ll_ledger.rows.values()), 2),
                          "poly_last_poll": feed.last_poll if feed else None},

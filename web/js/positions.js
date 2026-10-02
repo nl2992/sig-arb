@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = (n, d = 0) => n == null ? '—' : Number(n).toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d});
 const signed = (n, d = 0) => n == null ? '—' : `<span class="${n >= 0 ? 'pos-pos' : 'pos-neg'}">${n >= 0 ? '+' : ''}${num(n, d)}</span>`;
-const NAMES = {arb: 'Arbs (locked)', fv: 'Fair value', mm: 'Market making', ll: 'Lead-lag'};
+const NAMES = {arb: 'Arbs (locked)', cv: 'Conviction bets', fv: 'Fair value', mm: 'Market making', ll: 'Lead-lag'};
 
 function tile(label, value, sub) {
   return `<div><span>${esc(label)}</span><b>${value}</b>${sub ? `<small class="tile-sub">${sub}</small>` : ''}</div>`;
