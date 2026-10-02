@@ -408,7 +408,8 @@ def main():
     ap.add_argument("--fv-unit", type=float, default=500,
                     help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
     ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
-    ap.add_argument("--fv-max-gross", type=float, default=10000, help="fv: cap on fair-value capital")
+    ap.add_argument("--fv-max-gross", type=float, default=float("inf"),
+                    help="fv: cap on fair-value capital (default: the SIG venue exposure in risk_limits.json)")
     ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
