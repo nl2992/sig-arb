@@ -69,6 +69,25 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(fv.exit_signal(book(bids=[(0.95, 50)]), 0.955, 200, 0.01)["qty"], 50)
 
 
+class SizingTests(unittest.TestCase):
+    def test_capital_scales_with_gap_and_caps(self):
+        with tempfile.TemporaryDirectory() as d:
+            led = fv.Ledger(pathlib.Path(d) / "l.json")
+            deep = [(0.07, 100000)]
+            small = fv.plan_market(book(bids=[(0.05, 100000)]), {"fair": 0.02}, led, threshold=0.03, exit_band=0.01,
+                                   max_per_market=2000, gross_left=10000, unit=500)
+            big = fv.plan_market(book(bids=[(0.14, 100000)]), {"fair": 0.02}, led, threshold=0.03, exit_band=0.01,
+                                 max_per_market=2000, gross_left=10000, unit=500)
+            capped = fv.plan_market(book(bids=[(0.40, 100000)]), {"fair": 0.02}, led, threshold=0.03, exit_band=0.01,
+                                    max_per_market=2000, gross_left=10000, unit=500)
+            self.assertAlmostEqual(small["capital"], 500, delta=2)        # edge 0.03 -> 1 unit
+            self.assertAlmostEqual(big["capital"], 2000, delta=2)         # edge 0.12 -> 4 units
+            self.assertLessEqual(capped["capital"], 2000)                 # per-market cap
+            limited = fv.plan_market(book(bids=deep), {"fair": 0.02}, led, threshold=0.03, exit_band=0.01,
+                                     max_per_market=2000, gross_left=300, unit=500)
+            self.assertLessEqual(limited["capital"], 300)                 # account-wide room
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -104,7 +123,8 @@ class BotHookTests(unittest.TestCase):
                             {386: [{"exchangeId": 9, "side": "BUY", "isYes": True, "price": 0.06, "quantity": 500}]})
             cli = mock.Mock()
             cli.place.return_value = {"dryRun": True, "orders": [], "filledQuantity": 500}
-            a = argparse.Namespace(fv_threshold=0.03, fv_exit=0.01, fv_max_market=500, fv_max_gross=5000, mode="auto")
+            a = argparse.Namespace(fv_threshold=0.03, fv_exit=0.01, fv_max_market=500, fv_max_gross=5000, mode="auto",
+                                   fv_unit=500, fv_max_race=2500, max_gross=10000)
             with mock.patch.object(bot, "EXEC_LOG", d / "e.jsonl"), mock.patch.object(bot, "KILL_SWITCH", d / "K"):
                 out = bot.run_fair_value(cli, snap, refs, led, a, live=False)
             self.assertEqual(out["fv_orders"], 1)
@@ -123,7 +143,8 @@ class BotHookTests(unittest.TestCase):
             snap = Snapshot("t", [{"id": 386, "title": "Will the Republican Party win the Delaware Senate?"}],
                             {386: [{"exchangeId": 9, "side": "BUY", "isYes": True, "price": 0.06, "quantity": 500}]})
             cli = mock.Mock()
-            a = argparse.Namespace(fv_threshold=0.03, fv_exit=0.01, fv_max_market=500, fv_max_gross=5000, mode="auto")
+            a = argparse.Namespace(fv_threshold=0.03, fv_exit=0.01, fv_max_market=500, fv_max_gross=5000, mode="auto",
+                                   fv_unit=500, fv_max_race=2500, max_gross=10000)
             with mock.patch.object(bot, "KILL_SWITCH", d / "K"):
                 out = bot.run_fair_value(cli, snap, refs, fv.Ledger(d / "l.json"), a, live=True)
             cli.place.assert_not_called()

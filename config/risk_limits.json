@@ -1,9 +1,13 @@
 {
   "version": 1,
-  "per_trade_capital": 1000,
+  "per_trade_capital": 2000,
   "daily_loss": 500,
-  "venue_exposure": {"sig": 5000, "kalshi": 2000, "polymarket": 2000},
-  "event_exposure": 1500,
+  "venue_exposure": {
+    "sig": 10000,
+    "kalshi": 0,
+    "polymarket": 0
+  },
+  "event_exposure": 2500,
   "max_quote_age_s": 5.0,
   "max_slippage": 0.01,
   "max_residual_contracts": 50,

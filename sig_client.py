@@ -208,6 +208,15 @@ class Client:
                 return float(j[k])
         return None
 
+    def portfolio(self) -> dict:
+        """Holdings (avg price in the held side's terms), cash and daily P&L."""
+        return self._get("/api/portfolio/page-data", tournamentId=self.tournament)
+
+    def deployed_capital(self) -> float:
+        """Capital tied up in open positions: sum of |quantity| x average price paid."""
+        return sum(abs(float(h.get("quantity") or 0)) * float(h.get("averagePricePaid") or 0)
+                   for h in self.portfolio().get("holdings", []))
+
     def my_orders(self, market_id: int) -> List[dict]:
         j = self.book_raw(market_id)
         if "myOrders" in j:

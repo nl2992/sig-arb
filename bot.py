@@ -253,14 +253,20 @@ def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
                             "capital": r.capital, "result": res}) + "\n")
 
 
-def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool) -> dict:
-    """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like)."""
+def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, risk=None) -> dict:
+    """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like).
+    Room is the tightest of: account-wide exposure cap, fair-value cap, per-race cap
+    (sibling markets are one bet), per-market cap; size scales with the gap."""
     out = {"fv_signals": 0, "fv_orders": 0, "fv_skipped": 0}
     for m in snap.markets:
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
+        race_used = sum(ledger.capital(x["id"]) for x in snap.markets)
+        gross_left = min(a.fv_max_gross - ledger.gross(),
+                         getattr(a, "fv_max_race", float("inf")) - race_used,
+                         (a.max_gross - risk.gross) if risk is not None else float("inf"))
         plan = fair_value.plan_market(book, refs.fair(m["id"]), ledger, threshold=a.fv_threshold,
                                       exit_band=a.fv_exit, max_per_market=a.fv_max_market,
-                                      gross_left=a.fv_max_gross - ledger.gross())
+                                      gross_left=gross_left, unit=getattr(a, "fv_unit", None))
         if not plan:
             continue
         out["fv_signals"] += 1
@@ -292,6 +298,9 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool) -> 
                 cli.cancel(oid, dry_run=not live)
         if live and fq > 0:
             ledger.record(m["id"], plan["yes_side"], fq, plan["limit"])
+            if risk is not None:
+                cost = fq * (plan["limit"] if plan["yes_side"] == "BUY" else 1 - plan["limit"])
+                risk.gross += -cost if plan.get("exit") else cost
         status = "UNKNOWN" if resp.get("_unknown") else ("DONE" if fq >= plan["qty"] else "PARTIAL" if fq else "MISS")
         res = {"status": status, "strategy": "fv", "kind": kind, "market": m["id"], "plan": plan,
                "filled": fq, "client_order_id": coid, "dryRun": bool(resp.get("dryRun"))}
@@ -396,8 +405,10 @@ def main():
                     help="comma list: arb (complete-set arbs), fv (trade toward Kalshi/Polymarket fair value)")
     ap.add_argument("--fv-threshold", type=float, default=0.03, help="fv: enter when SIG is this far past fair")
     ap.add_argument("--fv-exit", type=float, default=0.01, help="fv: close once SIG is within this of fair")
-    ap.add_argument("--fv-max-market", type=float, default=500, help="fv: capital cap per market")
-    ap.add_argument("--fv-max-gross", type=float, default=5000, help="fv: total capital cap")
+    ap.add_argument("--fv-unit", type=float, default=500,
+                    help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
+    ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
+    ap.add_argument("--fv-max-gross", type=float, default=10000, help="fv: cap on fair-value capital")
     ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -427,6 +438,8 @@ def main():
         refs.refresh()
         refs.start(a.ref_interval)
         a.fv_max_gross = min(a.fv_max_gross, limits["venue_exposure"].get("sig", a.fv_max_gross))
+        a.fv_max_market = min(a.fv_max_market, limits["per_trade_capital"])
+        a.fv_max_race = limits["event_exposure"]
     balance, balance_at = None, 0.0
     book_cache = {}
     while True:
@@ -447,8 +460,16 @@ def main():
             if time.time() - last_universe > a.refresh_universe:
                 scanner.set_markets(fast_scan.load_markets(cli, refresh=True))
                 last_universe = time.time()
-            if not a.budget and time.time() - balance_at > a.balance_every and not scanner.paused_for():
-                balance, balance_at = cli.balance() or balance, time.time()
+            if time.time() - balance_at > a.balance_every and not scanner.paused_for():
+                if not a.budget:
+                    balance = cli.balance() or balance
+                # The exposure cap counts every open position on the account (arb and
+                # fair value, including ones opened before this process started).
+                try:
+                    risk.gross = cli.deployed_capital()
+                except Exception as e:
+                    log.warning("could not read deployed capital: %s", e)
+                balance_at = time.time()
             budget = a.budget or balance or 100_000
             scan = {}
             # Each race is evaluated, and traded, as soon as all its books arrive.
@@ -456,7 +477,7 @@ def main():
                 for m in snap.markets:
                     book_cache[m["id"]] = (m, snap.levels[m["id"]], snap.ts)
                 if "fv" in strategies:
-                    fv_counts = run_fair_value(cli, snap, refs, ledger, a, live)
+                    fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk)
                     for k, v in fv_counts.items():
                         counts[k] = counts.get(k, 0) + v
                 if "arb" not in strategies:

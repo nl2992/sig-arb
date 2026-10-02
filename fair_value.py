@@ -214,9 +214,21 @@ def net_holding(cli, market_id: int) -> float:
                if str(h.get("settlementOption", "YES")).upper() == "YES")
 
 
+def touch_edge(book: Book, fair: float) -> float:
+    """How far SIG's best price is past fair (positive = tradeable toward fair)."""
+    edges = []
+    if book.bids:
+        edges.append(book.bids[0][0] - fair)
+    if book.asks:
+        edges.append(fair - book.asks[0][0])
+    return max(edges) if edges else 0.0
+
+
 def plan_market(book: Book, fair: Optional[dict], ledger: Ledger, *, threshold: float, exit_band: float,
-                max_per_market: float, gross_left: float) -> Optional[dict]:
-    """Exit first, else entry; None when nothing to do."""
+                max_per_market: float, gross_left: float, unit: Optional[float] = None) -> Optional[dict]:
+    """Exit first, else entry; None when nothing to do. With `unit`, entry capital scales
+    with the gap: unit x (edge at the touch / threshold), so a large move on Kalshi or
+    Polymarket that SIG has not followed earns a proportionally large position."""
     if not fair:
         return None
     f = fair["fair"]
@@ -226,6 +238,8 @@ def plan_market(book: Book, fair: Optional[dict], ledger: Ledger, *, threshold: 
         if ex:
             return ex
     room = min(max_per_market - ledger.capital(book.market_id), gross_left)
+    if unit:
+        room = min(room, unit * max(0.0, touch_edge(book, f)) / threshold)
     sig = entry_signal(book, f, threshold, room)
     # never add against an existing fair-value position; exits handle that side
     if sig and pos and (pos > 0) != (sig["yes_side"] == "BUY"):
