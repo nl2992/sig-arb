@@ -752,6 +752,12 @@ def main():
                     log.info("SIG session renewed; token valid %.0f min", (left or 0) / 60)
                 except Exception as e:
                     log.error("SIG session renewal failed: %s", e)
+                    if "already_used" in str(e) or "invalid_grant" in str(e) or "(400)" in str(e):
+                        # The refresh token is dead (e.g. a browser on the same login renewed
+                        # first). Retrying can never succeed: stop, and wait for a fresh cookie.
+                        cli.can_refresh = False
+                        log.error("SIG session revoked: run python go_live.py set-cookie "
+                                  "(private window), then restart")
             blockers = live_blockers(a, limits, cli=cli)
             live = a.mode != "signal" and not blockers
             if a.mode != "signal" and a.live and blockers:
