@@ -200,3 +200,13 @@ class TimeoutTests(unittest.TestCase):
                 mock.patch.object(c.s, "post", side_effect=requests.ReadTimeout("slow")):
             resp = c.place(1, 1042, "BUY", 0.4, 100, dry_run=False, client_order_id="x")
         self.assertTrue(resp["_unknown"])
+
+
+class OrderTimeoutTests(unittest.TestCase):
+    def test_orders_wait_at_least_60s(self):
+        c = client()
+        with mock.patch.object(sig_client, "PLACE_PAYLOAD_CONFIRMED", True), \
+                mock.patch.object(c.s, "post", return_value=Resp(200, {"quantityTraded": 10})) as post:
+            c.place_raw(1042, "BUY", 0.4, 10, dry_run=False)
+            c.cancel("o1", dry_run=False)
+        self.assertTrue(all(call.kwargs["timeout"] >= 60 for call in post.call_args_list))

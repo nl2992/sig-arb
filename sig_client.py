@@ -30,6 +30,8 @@ BASE = "https://sig.thesuper.market"
 ENV_PATH = pathlib.Path(__file__).with_name(".env")
 # Public Supabase project key (role "anon"), read once from the site's JS and cached.
 SUPABASE_PUBLIC = pathlib.Path(__file__).with_name("logs") / "supabase_public.json"
+# SIG can take 30s+ to execute an order under load; a shorter wait turns fills into "unknown".
+ORDER_TIMEOUT = 60
 # @supabase/ssr splits cookies longer than this into .0, .1, ... chunks.
 COOKIE_CHUNK = 3180
 DEFAULT_TOURNAMENT = "bda92870-621e-47b0-bc3c-3602c5c26f55"
@@ -257,7 +259,8 @@ class Client:
         if not self.profile_id:
             raise PermissionError("no profile id (set SIG_PROFILE_ID or a cookie with the Supabase user)")
         try:
-            r = self.s.post(BASE + "/api/trading/orders/place", data=json.dumps(body), timeout=self.timeout,
+            r = self.s.post(BASE + "/api/trading/orders/place", data=json.dumps(body),
+                            timeout=max(self.timeout, ORDER_TIMEOUT),
                             headers={"Authorization": f"Bearer {self.access_token}"})
         except (requests.Timeout, requests.ConnectionError) as e:
             # The order may have reached SIG: never treat a lost reply as "not placed".
@@ -308,7 +311,7 @@ class Client:
     def cancel(self, order_id: str, dry_run: bool = True):
         if dry_run or not order_id:
             return {"dryRun": True}
-        r = self.s.post(BASE + "/api/trading/orders/cancel", timeout=self.timeout,
+        r = self.s.post(BASE + "/api/trading/orders/cancel", timeout=max(self.timeout, ORDER_TIMEOUT),
                         data=json.dumps({"orderId": order_id, "tournamentId": self.tournament}),
                         headers={"Authorization": f"Bearer {self.access_token}"})
         return {"_status": r.status_code, "body": r.text[:500]}

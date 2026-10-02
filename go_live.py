@@ -293,6 +293,11 @@ def main(argv=None):
                       flush=True)
             if not blocking:
                 break
+            if all(r["check"] == "kill_switch" for r in blocking):
+                # Starting paused is safe: the bot scans and reconciles but sends nothing until
+                # the kill switch is released (after reviewing its reason).
+                print("starting PAUSED: kill switch on; release with --release-kill-switch or rm logs/KILL_SWITCH")
+                break
             # only SIG being unreachable is worth waiting out; anything else needs a person
             transient = all(r["check"] == "sig_read_access" for r in blocking)
             if not (a.wait and transient and _t.time() < deadline):
