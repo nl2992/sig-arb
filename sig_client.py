@@ -212,6 +212,10 @@ class Client:
         """Holdings (avg price in the held side's terms), cash and daily P&L."""
         return self._get("/api/portfolio/page-data", tournamentId=self.tournament)
 
+    def transactions(self, limit: int = 100) -> List[dict]:
+        """Recent account events (trades, settlements), newest first."""
+        return self._get("/api/users/[id]/transactions", limit=limit, tournamentId=self.tournament).get("data", [])
+
     def deployed_capital(self) -> float:
         """Capital tied up in open positions: sum of |quantity| x average price paid."""
         return sum(abs(float(h.get("quantity") or 0)) * float(h.get("averagePricePaid") or 0)

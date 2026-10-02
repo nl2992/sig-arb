@@ -240,6 +240,10 @@ def status() -> int:
         print(f"counts       {st.get('counts')}")
         if st.get("fv"):
             print(f"fair value   {st['fv']}")
+        hc = st.get("holdings_check") or {}
+        if hc.get("ok") is not None:
+            print(f"holdings     {'match bot records' if hc['ok'] else 'DIFFERENCES: ' + json.dumps(hc.get('pending_differences'))}"
+                  f" (checked {hc.get('checked_at')})")
         if st.get("error"):
             print(f"last error   {st['error']}")
     except (OSError, ValueError):

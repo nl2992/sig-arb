@@ -12,6 +12,7 @@ from http.server import ThreadingHTTPServer
 from urllib.parse import urlencode
 
 import bot
+bot.INTENT_LOG = pathlib.Path(tempfile.mkdtemp()) / "order_intents.jsonl"   # never the real log
 import gates
 from dashboard import RELEASE_PHRASE, Source, execution_actions, handler
 from signals import Snapshot, generate

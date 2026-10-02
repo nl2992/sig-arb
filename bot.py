@@ -24,11 +24,13 @@ All executions are appended to logs/executions.jsonl.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import logging
 import os
 import pathlib
+import signal
 import time
 import uuid
 
@@ -36,6 +38,7 @@ from arb_engine import ArbResult, Book, breakeven_limit
 import fair_value
 import fast_scan
 import gates
+import holdings_check
 import sig_client
 from sig_client import Client
 from signals import HERE, Snapshot, generate, load_exhaustive, log_csv, render, sig_key, tickets
@@ -43,6 +46,7 @@ from signals import HERE, Snapshot, generate, load_exhaustive, log_csv, render, 
 log = logging.getLogger("sigarb")
 EXEC_LOG = HERE / "logs" / "executions.jsonl"
 KILL_SWITCH = HERE / "logs" / "KILL_SWITCH"
+INTENT_LOG = HERE / "logs" / "order_intents.jsonl"
 BOT_STATUS = HERE / "logs" / "bot_status.json"
 # Latest books the bot has read, shared with the dashboard so it never polls SIG itself.
 BOT_BOOKS = HERE / "logs" / "bot_books.json"
@@ -102,6 +106,56 @@ def preview(cli: Client, r: ArbResult) -> list:
     return out
 
 
+# Ctrl+C / SIGTERM must never land between an order leaving and its fill being recorded
+# (that lost fills on #376 and #383 on 1 Oct). Inside critical() a stop request is
+# deferred until the order is journaled and booked, then raised.
+_critical_depth = 0
+_stop_pending = False
+
+
+def _on_stop_signal(signum, frame):
+    global _stop_pending
+    if _critical_depth:
+        _stop_pending = True
+        log.warning("stop requested: finishing the order in flight first")
+        return
+    raise KeyboardInterrupt
+
+
+@contextlib.contextmanager
+def critical():
+    global _critical_depth, _stop_pending
+    _critical_depth += 1
+    try:
+        yield
+    finally:
+        _critical_depth -= 1
+        if not _critical_depth and _stop_pending:
+            _stop_pending = False
+            raise KeyboardInterrupt
+
+
+def place_tracked(cli: Client, strategy: str, market_id: int, exchange_id: int, yes_side: str,
+                  limit: float, qty: float, live: bool, client_order_id: str, holdings: float = None) -> dict:
+    """cli.place with a write-ahead intent: SENT is on disk before the order leaves, the
+    result after it returns. A process killed in between leaves an in-doubt intent that
+    holdings_check recovers from SIG's holdings on the next start."""
+    if live:
+        holdings_check.write_intent(client_order_id, strategy, market_id, yes_side, limit, qty, INTENT_LOG)
+    kw = {} if holdings is None else {"holdings": holdings}
+    try:
+        resp = cli.place(market_id, exchange_id, yes_side, limit, qty, dry_run=not live,
+                         client_order_id=client_order_id, **kw)
+    except Exception as e:
+        if live:
+            holdings_check.resolve_intent(client_order_id, "ERROR", INTENT_LOG, error=str(e)[:200])
+        raise
+    if live:
+        holdings_check.resolve_intent(client_order_id, "UNKNOWN" if resp.get("_unknown") else "DONE", INTENT_LOG,
+                                      filled=resp.get("filledQuantity"))
+    return resp
+
+
 def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: float = 0.005,
             fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None,
             pre_quote: bool = False) -> dict:
@@ -130,8 +184,8 @@ def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: f
                 rep.append({"market": leg["market_id"], "error": f"quote: {e}"})
                 return {"status": "ABORT" if k == 0 else "LEGGED", "legs": rep, "run_id": run_id}
         coid = f"{run_id}:{k}"
-        resp = cli.place(leg["market_id"], leg["exchange_id"], yes_side, limit, target,
-                         dry_run=not live, client_order_id=coid)
+        resp = place_tracked(cli, "arb", leg["market_id"], leg["exchange_id"], yes_side, limit, target,
+                             live, coid)
         fq, fp, oids = _fill_of(resp, target, limit)
         rep.append({"market": leg["market_id"], "side": yes_side, "limit": round(limit, 4),
                     "req": target, "filled": fq, "avg": fp, "client_order_id": coid,
@@ -169,8 +223,8 @@ def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2
 
     def send(k, leg, limit, qty, suffix=""):
         coid = f"{run_id}:{k}{suffix}"
-        resp = cli.place(leg["market_id"], leg["exchange_id"], leg["yes_side"], limit, qty,
-                         dry_run=not live, client_order_id=coid)
+        resp = place_tracked(cli, "arb", leg["market_id"], leg["exchange_id"], leg["yes_side"], limit, qty,
+                             live, coid)
         fq, fp, oids = _fill_of(resp, qty, limit)
         if fq < qty and not resp.get("_unknown"):
             for oid in oids:
@@ -253,7 +307,8 @@ def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
                             "capital": r.capital, "result": res}) + "\n")
 
 
-def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, risk=None) -> dict:
+def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, risk=None,
+                   holdings: dict = None) -> dict:
     """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like).
     Room is the tightest of: account-wide exposure cap, fair-value cap, per-race cap
     (sibling markets are one bet), per-market cap; size scales with the gap."""
@@ -283,37 +338,47 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
         if a.mode == "confirm" and input(f"{desc} {'LIVE' if live else 'DRY RUN'}? [y/N] ").strip().lower() != "y":
             out["fv_skipped"] += 1
             continue
-        coid = f"fv:{uuid.uuid4().hex[:12]}"
-        try:
-            holding = fair_value.net_holding(cli, m["id"]) if live else 0.0
-            resp = cli.place(m["id"], book.exchange_id, plan["yes_side"], plan["limit"], plan["qty"],
-                             holdings=holding, dry_run=not live, client_order_id=coid)
-        except Exception as e:
-            log.error("fv order failed on #%s: %s", m["id"], e)
-            out["fv_skipped"] += 1
-            continue
-        fq, fp, oids = _fill_of(resp, plan["qty"], plan["limit"])
-        if fq < plan["qty"]:
-            for oid in oids:
-                cli.cancel(oid, dry_run=not live)
-        if live and fq > 0:
-            ledger.record(m["id"], plan["yes_side"], fq, plan["limit"])
-            if risk is not None:
-                cost = fq * (plan["limit"] if plan["yes_side"] == "BUY" else 1 - plan["limit"])
-                risk.gross += -cost if plan.get("exit") else cost
-        status = "UNKNOWN" if resp.get("_unknown") else ("DONE" if fq >= plan["qty"] else "PARTIAL" if fq else "MISS")
-        res = {"status": status, "strategy": "fv", "kind": kind, "market": m["id"], "plan": plan,
-               "filled": fq, "client_order_id": coid, "dryRun": bool(resp.get("dryRun"))}
-        EXEC_LOG.parent.mkdir(exist_ok=True)
-        with EXEC_LOG.open("a") as f:
-            f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": a.mode, "live": live,
-                                "race": m["title"], "dir": f"FV_{kind}", "qty": plan["qty"],
-                                "pnl": plan.get("expected_pnl", 0.0), "capital": plan.get("capital", 0.0),
-                                "result": res}) + "\n")
-        out["fv_orders"] += 1
-        log.info("%s -> %s filled %g", desc, status, fq)
-        if live and status == "UNKNOWN":
-            engage_kill_switch(f"UNKNOWN fair-value order on #{m['id']} ({coid}): reconcile before retrying")
+        with critical():
+            coid = f"fv:{uuid.uuid4().hex[:12]}"
+            try:
+                # Account-wide holding from the minute snapshot (kept current after each fill),
+                # so the engine closes before opening without an extra request per order.
+                if not live:
+                    holding = 0.0
+                elif holdings is not None:
+                    holding = holdings.get(m["id"], 0.0)
+                else:
+                    holding = fair_value.net_holding(cli, m["id"])
+                resp = place_tracked(cli, "fv", m["id"], book.exchange_id, plan["yes_side"], plan["limit"],
+                                     plan["qty"], live, coid, holdings=holding)
+            except Exception as e:
+                log.error("fv order failed on #%s: %s", m["id"], e)
+                out["fv_skipped"] += 1
+                continue
+            fq, fp, oids = _fill_of(resp, plan["qty"], plan["limit"])
+            if fq < plan["qty"]:
+                for oid in oids:
+                    cli.cancel(oid, dry_run=not live)
+            if live and fq > 0:
+                ledger.record(m["id"], plan["yes_side"], fq, plan["limit"])
+                if holdings is not None:
+                    holdings[m["id"]] = holdings.get(m["id"], 0.0) + (fq if plan["yes_side"] == "BUY" else -fq)
+                if risk is not None:
+                    cost = fq * (plan["limit"] if plan["yes_side"] == "BUY" else 1 - plan["limit"])
+                    risk.gross += -cost if plan.get("exit") else cost
+            status = "UNKNOWN" if resp.get("_unknown") else ("DONE" if fq >= plan["qty"] else "PARTIAL" if fq else "MISS")
+            res = {"status": status, "strategy": "fv", "kind": kind, "market": m["id"], "plan": plan,
+                   "filled": fq, "client_order_id": coid, "dryRun": bool(resp.get("dryRun"))}
+            EXEC_LOG.parent.mkdir(exist_ok=True)
+            with EXEC_LOG.open("a") as f:
+                f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "mode": a.mode, "live": live,
+                                    "race": m["title"], "dir": f"FV_{kind}", "qty": plan["qty"],
+                                    "pnl": plan.get("expected_pnl", 0.0), "capital": plan.get("capital", 0.0),
+                                    "result": res}) + "\n")
+            out["fv_orders"] += 1
+            log.info("%s -> %s filled %g", desc, status, fq)
+            if live and status == "UNKNOWN":
+                engage_kill_switch(f"UNKNOWN fair-value order on #{m['id']} ({coid}): reconcile before retrying")
     return out
 
 
@@ -413,6 +478,8 @@ def main():
     ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    signal.signal(signal.SIGINT, _on_stop_signal)
+    signal.signal(signal.SIGTERM, _on_stop_signal)
 
     limits = gates.load_limits(a.limits)     # malformed limits -> refuse to start
     apply_limits(a, limits)
@@ -432,9 +499,20 @@ def main():
     strategies = {x.strip() for x in a.strategy.split(",") if x.strip()}
     if not strategies <= {"arb", "fv"}:
         raise SystemExit(f"unknown --strategy {a.strategy}")
-    refs = ledger = None
+    refs = None
+    ledger = fair_value.Ledger()            # also needed to reconcile holdings when fv is off
+    checker = holdings_check.HoldingsCheck(ledger, lambda why: engage_kill_switch(why, actor="holdings_check"),
+                                           intent_log=INTENT_LOG, exec_log=EXEC_LOG)
+    acct = {}                                # market_id -> signed YES holding (minute snapshot)
+    try:
+        port = cli.portfolio()
+        acct = holdings_check.actual_holdings(port)
+        rep = checker.check(port, cli.transactions, immediate=True)
+        log.info("holdings check at start: %s", json.dumps(rep))
+    except Exception as e:
+        log.error("holdings check at start failed: %s", e)
     if "fv" in strategies:
-        refs, ledger = fair_value.ReferencePrices(), fair_value.Ledger()
+        refs = fair_value.ReferencePrices()
         log.info("fv: %d approved reference mappings; first refresh...", len(refs.matches))
         refs.refresh()
         refs.start(a.ref_interval)
@@ -464,12 +542,18 @@ def main():
             if time.time() - balance_at > a.balance_every and not scanner.paused_for():
                 if not a.budget:
                     balance = cli.balance() or balance
-                # The exposure cap counts every open position on the account (arb and
-                # fair value, including ones opened before this process started).
+                # One account snapshot a minute: the exposure cap counts every open position
+                # (arb and fair value, including ones from earlier runs), fair-value orders
+                # read holdings from it, and holdings are reconciled against bot records.
                 try:
-                    risk.gross = cli.deployed_capital()
+                    port = cli.portfolio()
+                    risk.gross = holdings_check.deployed(port)
+                    acct = holdings_check.actual_holdings(port)
+                    rep = checker.check(port, cli.transactions)
+                    if not rep["ok"]:
+                        log.warning("holdings check: %s", json.dumps(rep))
                 except Exception as e:
-                    log.warning("could not read deployed capital: %s", e)
+                    log.warning("could not read account snapshot: %s", e)
                 balance_at = time.time()
             budget = a.budget or balance or 100_000
             scan = {}
@@ -478,7 +562,7 @@ def main():
                 for m in snap.markets:
                     book_cache[m["id"]] = (m, snap.levels[m["id"]], snap.ts)
                 if "fv" in strategies:
-                    fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk)
+                    fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk, acct)
                     for k, v in fv_counts.items():
                         counts[k] = counts.get(k, 0) + v
                 if "arb" not in strategies:
@@ -507,13 +591,18 @@ def main():
                         if input(f"Execute {r.race} {r.direction} x{r.qty:g} "
                                  f"(pnl {r.pnl:.2f}) {'LIVE' if live else 'DRY RUN'}? [y/N] ").strip().lower() != "y":
                             continue
-                    if a.sequential:
-                        res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
-                                      pre_quote=a.pre_quote)
-                    else:
-                        res = execute_parallel(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee)
-                    risk.book(r, res)
-                    journal(r, res, a.mode, live)
+                    with critical():
+                        if a.sequential:
+                            res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
+                                          pre_quote=a.pre_quote)
+                        else:
+                            res = execute_parallel(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee)
+                        risk.book(r, res)
+                        for leg in res.get("legs", []):
+                            if live and leg.get("filled") and not leg.get("dryRun"):
+                                acct[leg["market"]] = acct.get(leg["market"], 0.0) + (
+                                    leg["filled"] if leg["side"] == "BUY" else -leg["filled"])
+                        journal(r, res, a.mode, live)
                     counts["executed"] += 1
                     last_exec = {"race": r.race, "status": res["status"], "live": live,
                                  "book_age_s": round(time.time() - t0, 1)}
@@ -539,8 +628,8 @@ def main():
                      interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
                      max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
                      last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left(),
-                     scan=scan, strategies=sorted(strategies),
-                     fv=None if ledger is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
+                     scan=scan, strategies=sorted(strategies), holdings_check=checker.last,
+                     fv=None if refs is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
                                                      "positions": sum(1 for r in ledger.rows.values() if r.get("qty")),
                                                      "references": refs.last_refresh})
         time.sleep(max(0.0, a.interval - (time.time() - t0)))

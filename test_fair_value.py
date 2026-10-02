@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 import bot
+bot.INTENT_LOG = pathlib.Path(tempfile.mkdtemp()) / "order_intents.jsonl"   # never the real log
 import fair_value as fv
 from arb_engine import Book
 from signals import Snapshot

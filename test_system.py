@@ -1,6 +1,9 @@
 """Offline end-to-end tests: signals live-path + bot execution with a fake client."""
 import json, pathlib, sys, tempfile
 import sig_client, signals, bot
+import tempfile
+import pathlib
+bot.INTENT_LOG = pathlib.Path(tempfile.mkdtemp()) / "order_intents.jsonl"   # never the real log
 from signals import Snapshot, generate
 FIX = pathlib.Path(__file__).with_name("fixtures") / "sample_snapshot.json"
 snap = Snapshot.load(FIX)
