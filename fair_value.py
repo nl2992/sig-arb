@@ -173,6 +173,17 @@ class Ledger:
     def capital(self, market_id: int) -> float:
         return float(self.rows.get(market_id, {}).get("capital", 0.0))
 
+    def avg_yes(self, market_id: int) -> Optional[float]:
+        """Average entry in YES terms (long YES: price paid; short YES: 1 - NO price paid)."""
+        q, cap = self.position(market_id), self.capital(market_id)
+        if not q:
+            return None
+        return cap / q if q > 0 else 1 - cap / -q
+
+    def held_for(self, market_id: int) -> float:
+        opened = self.rows.get(market_id, {}).get("opened_at")
+        return time.time() - opened if opened and self.position(market_id) else 0.0
+
     def gross(self) -> float:
         return sum(float(r.get("capital", 0.0)) for r in self.rows.values())
 
@@ -183,6 +194,8 @@ class Ledger:
         row = self.rows.setdefault(market_id, {"qty": 0.0, "capital": 0.0, "realized": 0.0})
         signed = qty if yes_side == "BUY" else -qty
         pos = row["qty"]
+        if pos == 0:
+            row["opened_at"] = time.time()
         if pos == 0 or (pos > 0) == (signed > 0):          # opening / adding
             row["capital"] += qty * (price if signed > 0 else 1 - price)
             row["qty"] = pos + signed

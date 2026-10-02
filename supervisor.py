@@ -35,7 +35,7 @@ KILL_SWITCH = LOGS / "KILL_SWITCH"
 BOT_STATUS = LOGS / "bot_status.json"
 MIN_FREE_GB = 2.0
 LOG_MAX_BYTES = 50 * 1024 * 1024
-DEFAULT_BOT_ARGS = ["--mode", "auto", "--live", "--interval", "3", "--strategy", "arb,fv"]
+DEFAULT_BOT_ARGS = ["--mode", "auto", "--live", "--interval", "3", "--strategy", "arb,fv,ll,mm"]
 DASHBOARD_ARGS = ["--port", "8876"]
 
 

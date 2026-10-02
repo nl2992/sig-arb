@@ -69,6 +69,7 @@ class TieredScanner:
         self.cli, self.exhaustive = cli, exhaustive
         self.hot_band, self.sweep_races, self.concurrency = hot_band, sweep_races, concurrency
         self.pause_until, self.backoff = 0.0, 0.0
+        self.boost: set = set()          # races to read first this pass (reference movers, MM quotes)
         self.set_markets(markets)
 
     def set_markets(self, markets: List[dict]):
@@ -86,10 +87,14 @@ class TieredScanner:
     def paused_for(self) -> float:
         return max(0.0, self.pause_until - time.time())
 
+    def race_of(self, market_id: int) -> Optional[str]:
+        return next((r for r, legs in self.groups.items() if market_id in legs.values()), None)
+
     def select(self, full: bool = False) -> List[str]:
         if full:
             return list(self.order)
-        chosen = self.hot()
+        boosted = [r for r in sorted(getattr(self, "boost", set())) if r in self.groups]
+        chosen = boosted + [r for r in self.hot() if r not in boosted]
         taken = set(chosen)
         cold = [r for r in self.order if r not in taken]
         n = min(self.sweep_races, len(cold))

@@ -248,7 +248,7 @@ def main(argv=None):
     sub.add_parser("set-cookie", help="write the clipboard cookie to .env (macOS pbpaste)")
     st = sub.add_parser("start", help="readiness check, then run bot + dashboard under the supervisor")
     st.add_argument("--mode", choices=["auto", "confirm", "signal"], default="auto")
-    st.add_argument("--strategy", default="arb,fv")
+    st.add_argument("--strategy", default="arb,fv,ll,mm")
     st.add_argument("--dry", action="store_true", help="run without --live (no real orders)")
     st.add_argument("--release-kill-switch", action="store_true",
                     help="remove logs/KILL_SWITCH first (only do this after reviewing its reason)")

@@ -140,18 +140,28 @@ def fill_price(transactions: List[dict], market_id: int, signed_qty: float, sinc
 class HoldingsCheck:
     def __init__(self, ledger, engage: Callable[[str], None], intent_log: pathlib.Path = None,
                  exec_log: pathlib.Path = None, manual_log: pathlib.Path = None, strikes_to_kill: int = 2):
-        self.ledger, self.engage = ledger, engage
+        """`ledger` is the fair-value Ledger or a {strategy: Ledger} dict (fv, ll, mm)."""
+        self.ledgers = ledger if isinstance(ledger, dict) else {"fv": ledger}
+        self.ledger, self.engage = self.ledgers.get("fv"), engage
         self.intent_log, self.exec_log, self.manual_log = intent_log, exec_log, manual_log
         self.strikes_to_kill = strikes_to_kill
         self.strikes: Dict[int, int] = {}
         self.last: dict = {"ok": None}
+
+    def rows(self) -> dict:
+        """All strategy ledgers summed per market (signed YES quantity)."""
+        out: Dict[int, dict] = {}
+        for led in self.ledgers.values():
+            for k, row in led.rows.items():
+                out.setdefault(int(k), {"qty": 0.0})["qty"] += float(row.get("qty", 0))
+        return out
 
     def check(self, portfolio: dict, transactions_fn: Optional[Callable[[], List[dict]]] = None,
               immediate: bool = False) -> dict:
         """Recover in-doubt intents, then flag unexplained differences. `immediate`
         (startup) engages the kill switch on the first unexplained difference."""
         actual = actual_holdings(portfolio)
-        diff = diffs(actual, expected_holdings(self.ledger.rows, self.exec_log, self.manual_log))
+        diff = diffs(actual, expected_holdings(self.rows(), self.exec_log, self.manual_log))
         recovered, notes = [], []
         doubt = in_doubt(self.intent_log)
         txns = transactions_fn() if (doubt and transactions_fn) else []
@@ -162,8 +172,8 @@ class HoldingsCheck:
             if d and (d > 0) == (signed > 0) and abs(d) <= qty + TOLERANCE:
                 filled = min(abs(d), qty)
                 price = fill_price(txns, m, signed, it["ts"], float(it["limit"]))
-                if it["strategy"] == "fv":
-                    self.ledger.record(m, it["yes_side"], filled, price)
+                if it["strategy"] in self.ledgers:
+                    self.ledgers[it["strategy"]].record(m, it["yes_side"], filled, price)
                 else:
                     _append(self.manual_log or MANUAL_LOG,
                             {"ts": _now(), "action": "journal_backfill", "market_id": m,
@@ -185,7 +195,7 @@ class HoldingsCheck:
             self.strikes[m] = self.strikes.get(m, 0) + 1
         bad = {m: d for m, d in diff.items() if immediate or self.strikes[m] >= self.strikes_to_kill}
         if bad:
-            exp = expected_holdings(self.ledger.rows, self.exec_log, self.manual_log)
+            exp = expected_holdings(self.rows(), self.exec_log, self.manual_log)
             notes.append("holdings differ from bot records: " + "; ".join(
                 f"#{m} actual {actual.get(m, 0):g} expected {exp.get(m, 0):g}" for m in sorted(bad)))
         if notes:
