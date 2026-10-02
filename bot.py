@@ -936,7 +936,7 @@ def main():
                                 res = execute_parallel(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee)
                             risk.book(r, res)
                             for leg in res.get("legs", []):
-                                if live and leg.get("filled") and not leg.get("dryRun"):
+                                if live and leg.get("filled") and not leg.get("dryRun") and not leg.get("repair"):
                                     acct[leg["market"]] = acct.get(leg["market"], 0.0) + (
                                         leg["filled"] if leg["side"] == "BUY" else -leg["filled"])
                             journal(r, res, a.mode, live)

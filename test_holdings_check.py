@@ -175,3 +175,13 @@ class RestingQuoteRecoveryTests(Base):
         hc.resolve_intent("mm:5:bid:1", "DONE", self.intents, filled=0)
         self.check.check({"holdings": []}, lambda: [], immediate=True)
         self.assertEqual(len(hc.in_doubt(self.intents)), 1)                    # still a candidate
+
+
+class RepairRowTests(Base):
+    def test_repair_fill_is_not_double_counted(self):
+        with self.execs.open("a") as f:
+            f.write(json.dumps({"live": True, "result": {"status": "DONE", "legs": [
+                {"market": 281, "side": "SELL", "filled": 794, "dryRun": False},              # 150 + 644 folded in
+                {"market": 280, "side": "SELL", "filled": 794, "dryRun": False},
+                {"market": 281, "side": "SELL", "filled": 644, "dryRun": False, "repair": True}]}}) + "\n")
+        self.assertEqual(hc.expected_holdings({}, self.execs, self.manual)[281], -794)

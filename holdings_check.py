@@ -117,7 +117,8 @@ def expected_holdings(ledger_rows: dict, exec_log: pathlib.Path = None,
         if not r.get("live") or res.get("strategy") == "fv":
             continue
         for leg in res.get("legs", []):
-            if leg.get("dryRun") or not leg.get("filled"):
+            # a repair row's fill is already folded into its leg's "filled": never count it twice
+            if leg.get("dryRun") or leg.get("repair") or not leg.get("filled"):
                 continue
             out[int(leg["market"])] += -leg["filled"] if leg["side"] == "SELL" else leg["filled"]
     for r in _rows(manual_log or MANUAL_LOG):
