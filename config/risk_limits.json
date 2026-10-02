@@ -3,7 +3,7 @@
   "per_trade_capital": 2000,
   "daily_loss": 500,
   "venue_exposure": {
-    "sig": 75000,
+    "sig": 90000,
     "kalshi": 0,
     "polymarket": 0
   },
