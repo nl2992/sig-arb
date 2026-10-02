@@ -6,6 +6,9 @@ go_live.py — readiness checklist for live SIG trading. It never places an orde
     python go_live.py compare capture.json     # compare your hand-placed test order with the bot's body
     python go_live.py set-cookie               # write the clipboard cookie (copy(document.cookie)) to .env
     python go_live.py close 312 --limit 0.195  # exit a position (e.g. after LEGGED); asks y/N first
+    python go_live.py start                    # check, then run bot + dashboard in the background
+    python go_live.py status                   # processes, heartbeat, live/dry, token, exposure, disk
+    python go_live.py stop                     # stop everything cleanly
 
 `compare` takes a JSON file you save from DevTools after placing ONE tiny order by hand:
 
@@ -243,12 +246,42 @@ def main(argv=None):
     c = sub.add_parser("check", help="readiness checklist")
     c.add_argument("--offline", action="store_true", help="skip read-only SIG requests")
     sub.add_parser("set-cookie", help="write the clipboard cookie to .env (macOS pbpaste)")
+    st = sub.add_parser("start", help="readiness check, then run bot + dashboard under the supervisor")
+    st.add_argument("--mode", choices=["auto", "confirm", "signal"], default="auto")
+    st.add_argument("--strategy", default="arb,fv")
+    st.add_argument("--dry", action="store_true", help="run without --live (no real orders)")
+    st.add_argument("--release-kill-switch", action="store_true",
+                    help="remove logs/KILL_SWITCH first (only do this after reviewing its reason)")
+    sub.add_parser("stop", help="stop bot, dashboard and supervisor")
+    sub.add_parser("status", help="show what is running")
     cl = sub.add_parser("close", help="exit a position in one market (asks y/N)")
     cl.add_argument("market_id", type=int)
     cl.add_argument("--limit", type=float, required=True, help="YES price limit")
     k = sub.add_parser("compare", help="compare a captured manual order")
     k.add_argument("capture", type=pathlib.Path)
     a = ap.parse_args(argv)
+
+    if a.cmd in ("start", "stop", "status"):
+        import supervisor
+        if a.cmd == "stop":
+            return supervisor.stop()
+        if a.cmd == "status":
+            return supervisor.status()
+        if a.mode == "confirm":
+            print("confirm mode needs a terminal for y/N prompts; run bot.py directly instead")
+            return 1
+        if a.release_kill_switch and bot.KILL_SWITCH.exists():
+            print("releasing kill switch:", bot.KILL_SWITCH.read_text().splitlines()[0])
+            bot.KILL_SWITCH.unlink()
+        rows = check()
+        blocking = [r for r in rows if r["status"] in ("FAIL", "TODO")]
+        for r in blocking:
+            print(f"[{r['status']}] {r['check']}: {r['detail']}" + (f"\n   -> {r['action']}" if r["action"] else ""))
+        if blocking:
+            print("not starting; fix the items above (kill switch: --release-kill-switch after review)")
+            return 1
+        args = ["--mode", a.mode, "--interval", "3", "--strategy", a.strategy] + ([] if a.dry else ["--live"])
+        return supervisor.start(args)
 
     if a.cmd == "close":
         result = close(Client(), a.market_id, a.limit)

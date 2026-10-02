@@ -105,6 +105,19 @@ because nothing unwinds residuals automatically yet. Flatten by hand, reconcile,
 release it from the dashboard (typed confirmation; refused while reconciliation requires
 the switch). **Engage kill switch** in the dashboard stops new orders at once.
 
+## Running it day to day
+```bash
+python go_live.py set-cookie   # only when status shows the token expired (private-window login)
+python go_live.py start        # readiness check, then bot (auto, arb+fv, live) + dashboard in the background
+python go_live.py status       # processes, heartbeat, LIVE/DRY and why, token, exposure, disk
+python go_live.py stop         # stop everything cleanly
+```
+`start` refuses to run if any readiness check fails, if a bot is already running in a
+terminal tab, or if the kill switch is engaged (add `--release-kill-switch` only after
+reading its reason). The supervisor restarts crashed processes, engages the kill switch
+below 2 GB free disk, and sends macOS notifications for kill switch, stale heartbeat and
+an expiring token. Logs: `logs/bot.log`, `logs/dashboard.log`, `logs/supervisor.log`.
+
 ## Files
 | File | Role |
 |---|---|
