@@ -40,6 +40,7 @@ import fair_value
 import fast_scan
 import gates
 import holdings_check
+import positions
 import scalper
 import sig_client
 from sig_client import Client
@@ -778,6 +779,15 @@ def main():
                             rep = checker.check(port, cli.transactions)
                         if not rep["ok"]:
                             log.warning("holdings check: %s", json.dumps(rep))
+                        try:                           # dashboard positions & P&L, no extra SIG calls
+                            def fair_of(m_):
+                                f_ = feed.mid(m_) if feed is not None else None
+                                if f_ is None and refs is not None:
+                                    f_ = (refs.fair(m_) or {}).get("fair")
+                                return f_
+                            positions.write(positions.build(port, ledgers, fair_of))
+                        except Exception as e:
+                            log.warning("positions report failed: %s", e)
                     except Exception as e:
                         log.warning("could not read account snapshot: %s", e)
                     balance_at = time.time()

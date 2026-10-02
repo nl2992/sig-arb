@@ -478,7 +478,12 @@ class MarketMaker:
                         log.info("MM #%s fair %s: %s", m, None if fair is None else round(fair, 4), act)
             except Exception as e:
                 self.stats["errors"] += 1
-                log.warning("mm worker: %s", e)
+                self._last_sync = time.time()          # do not retry the sync every second
+                self._backoff = min(120.0, getattr(self, "_backoff", 2.0) * 2)
+                log.warning("mm worker: %s (backing off %.0fs)", e, self._backoff)
+                self._stop.wait(self._backoff)
+                continue
+            self._backoff = 2.0
 
     def stop_worker(self, timeout: float = 60) -> None:
         if getattr(self, "_thread", None):

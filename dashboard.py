@@ -45,6 +45,7 @@ MATCHES = ROOT / 'config' / 'market_matches.json'
 BOT_BOOKS = ROOT / 'logs' / 'bot_books.json'
 EXEC_LOG = ROOT / 'logs' / 'executions.jsonl'
 AUDIT_LOG = ROOT / 'logs' / 'audit.jsonl'
+POSITIONS = ROOT / 'logs' / 'positions.json'
 RELEASE_PHRASE = 'RELEASE KILL SWITCH'
 # Expected refresh cadence per feed in seconds; a feed is stale after twice this.
 FEED_CADENCE_S = {'sig_books': 15, 'sig_account': 60, 'crossvenue': 60, 'levels_db': 60}
@@ -742,6 +743,15 @@ def handler(source, action_token=None, actions=None):
                     self.send_body(200, json.dumps(execution_view(source), allow_nan=False).encode(), 'application/json')
                 except Exception:
                     self.send_body(500, b'{"error":"Execution state unavailable."}', 'application/json')
+            elif url.path == '/api/positions':
+                try:
+                    data = json.loads(POSITIONS.read_text())
+                    data['age_s'] = round(time.time() - POSITIONS.stat().st_mtime, 1)
+                    self.send_body(200, json.dumps(data, allow_nan=False).encode(), 'application/json')
+                except FileNotFoundError:
+                    self.send_body(404, b'{"error":"No positions report yet: the bot writes one each minute."}', 'application/json')
+                except Exception:
+                    self.send_body(500, b'{"error":"Positions report unreadable."}', 'application/json')
             elif url.path == '/api/orders/preview':
                 try:
                     params = parse_qs(url.query)
@@ -860,7 +870,8 @@ def handler(source, action_token=None, actions=None):
             elif url.path in ("/", "/dashboard.css", "/dashboard.js", "/status.js") or url.path.startswith('/js/'):
                 file = "dashboard.html" if url.path == "/" else url.path[1:]
                 allowed = {"js/api.js", "js/state.js", "js/opportunities.js", "js/drawer.js",
-                           "js/ticket.js", "js/arb-ticket.js", "js/execution.js", "js/account.js"}
+                           "js/ticket.js", "js/arb-ticket.js", "js/execution.js", "js/account.js",
+                           "js/positions.js"}
                 if file.startswith('js/') and file not in allowed:
                     self.send_body(404, b"Not found", "text/plain")
                     return

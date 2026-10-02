@@ -13,6 +13,16 @@
 <p id="botBlockers" class="ops-reasons" hidden></p>
 <details class="ops-gates" open><summary>Execution tape <span id="execCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Time</th><th>Race</th><th>Dir</th><th>Mode</th><th>Status</th><th>Qty</th><th>PnL</th><th>Legs</th></tr></thead><tbody id="execRows"><tr><td colspan="8" class="empty">No executions journaled yet.</td></tr></tbody></table></div></details>
 </section>
+<section id="positions" class="ops exec" aria-label="Positions and P&amp;L">
+<div class="section-title"><h2>Positions &amp; P&amp;L</h2><span id="posAsOf">Awaiting the bot's first positions report</span></div>
+<div class="ops-strip" id="posTiles"></div>
+<div class="pos-grid">
+<div><h3 class="pos-h">By strategy</h3><div class="table-wrap"><table><thead><tr><th>Strategy</th><th>Markets</th><th>Cost</th><th>Mark P&amp;L</th><th>Settlement value</th></tr></thead><tbody id="posStrategies"><tr><td colspan="5" class="empty">—</td></tr></tbody></table></div></div>
+<div><h3 class="pos-h">Stress test (settlement)</h3><div id="posRisk" class="pos-risk"></div></div>
+</div>
+<details class="ops-gates" open><summary>Races by worst case <span id="posRaceCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Race</th><th>Cost</th><th>If D wins</th><th>If R wins</th><th>Worst case</th><th></th></tr></thead><tbody id="posRaces"></tbody></table></div></details>
+<details class="ops-gates"><summary>All positions <span id="posCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Strategy</th><th>Race</th><th>Party</th><th>Side</th><th>Qty</th><th>Avg</th><th>SIG mark</th><th>Fair</th><th>Cost</th><th>Mark P&amp;L</th><th>Settlement EV</th></tr></thead><tbody id="posRows"></tbody></table></div></details>
+</section>
 <main><div class="heading"><div><p class="eyebrow">MARKET MONITOR</p><h1>Order-book opportunities</h1></div><div class="stamp"><span id="time">Awaiting first snapshot</span><label><input type="checkbox" id="auto" checked> Auto-refresh</label></div></div>
 <div id="error" role="alert" hidden></div>
 <p class="model-note">Live browser relay: run <code>browser_relay.js</code> in the signed-in SIG market page console to stream browser-authenticated books here every 15 seconds.</p>
@@ -34,4 +44,4 @@
 <div id="news" aria-live="polite">Select a market to inspect its source context.</div>
 <p class="model-note">Conditional on your forecast, current depth and the fee filter. No existing positions or cross-race correlations included. News probabilities are not inferred automatically.</p></section>
 <footer><span id="scope">Checking eligible races</span><span>Indicative order-book estimates. Trading availability is not verified by the scanner. Fees default to zero. Values in SUSQies.</span></footer>
-</main><script src="/dashboard.js"></script><script src="/status.js"></script><script type="module" src="/js/opportunities.js"></script><script type="module" src="/js/execution.js"></script></body></html>
+</main><script src="/dashboard.js"></script><script src="/status.js"></script><script type="module" src="/js/opportunities.js"></script><script type="module" src="/js/execution.js"></script><script type="module" src="/js/positions.js"></script></body></html>
