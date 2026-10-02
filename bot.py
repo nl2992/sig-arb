@@ -701,13 +701,15 @@ def main():
     ap.add_argument("--ll-tp", type=float, default=0.02, help="ll: take profit vs entry")
     ap.add_argument("--ll-stop", type=float, default=0.03, help="ll: stop loss vs entry")
     ap.add_argument("--ll-max-hold", type=float, default=2700, help="ll: time stop, sec")
-    ap.add_argument("--mm-edge", type=float, default=0.01, help="mm: quote at least this far from fair")
-    ap.add_argument("--mm-size", type=float, default=400, help="mm: shares per quote")
-    ap.add_argument("--mm-max-inventory", type=float, default=1000, help="mm: shares per market")
+    ap.add_argument("--mm-edge", type=float, default=0.005, help="mm: quote at least this far from fair")
+    ap.add_argument("--mm-size", type=float, default=600, help="mm: shares per quote")
+    ap.add_argument("--mm-max-inventory", type=float, default=1200, help="mm: shares per market")
+    ap.add_argument("--mm-max-capital", type=float, default=5000,
+                    help="mm: total inventory capital (its own budget); at the cap only exits are quoted")
     ap.add_argument("--mm-take", type=float, default=0.01, help="mm: exit profit vs entry")
     ap.add_argument("--mm-max-hold", type=float, default=1800, help="mm: after this, exit at fair")
     ap.add_argument("--mm-min-spread", type=float, default=0.015, help="mm: only quote SIG spreads this wide")
-    ap.add_argument("--mm-max-markets", type=int, default=15)
+    ap.add_argument("--mm-max-markets", type=int, default=25)
     ap.add_argument("--cv-max-bets", type=int, default=6, help="cv: concurrent conviction bets")
     ap.add_argument("--cv-max-bet", type=float, default=4000, help="cv: capital per bet")
     ap.add_argument("--cv-max-gross", type=float, default=24000, help="cv: total capital")
@@ -778,7 +780,7 @@ def main():
         mm = scalper.MarketMaker(cli, mm_ledger, edge=a.mm_edge, size=a.mm_size, max_inventory=a.mm_max_inventory,
                                  take=a.mm_take, max_hold_s=a.mm_max_hold, min_spread=a.mm_min_spread,
                                  max_markets=a.mm_max_markets, place=place_tracked,
-                                 min_price=a.mm_min_price, max_price=a.mm_max_price)
+                                 min_price=a.mm_min_price, max_price=a.mm_max_price, max_capital=a.mm_max_capital)
         mm.enabled = False                   # until the live self-test passes (in the worker)
     worker_live = {"live": False}
     if strategies & {"fv", "mm", "cv"}:

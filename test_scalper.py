@@ -280,3 +280,15 @@ class WorkerSafetyTests(WorkerTests):
         mm.stop_worker(5)
         cli.cancel.assert_any_call("z", dry_run=False)                     # disabled: quotes pulled
         self.assertEqual(len(place_calls), 1)                              # and nothing new placed
+
+
+class CapitalCapTests(Tmp):
+    def test_at_capital_cap_only_exits_are_quoted(self):
+        placed = []
+        mm = scalper.MarketMaker(mock.Mock(), self.led, live=True, requote_s=0, max_capital=100,
+                                 place=lambda *a, **k: placed.append((a[2], a[4], a[5])) or {"filledQuantity": 0})
+        self.led.record(7, "BUY", 300, 0.40)                               # 120 of inventory >= cap
+        mm.on_book(book(1, bids=[(0.40, 100)], asks=[(0.46, 100)]), 0.43, False, 0.0)
+        self.assertEqual(placed, [])                                         # no new market
+        mm.on_book(book(7, bids=[(0.40, 100)], asks=[(0.46, 100)]), 0.43, False, 300.0)
+        self.assertEqual([p[1] for p in placed], ["SELL"])                  # exit only

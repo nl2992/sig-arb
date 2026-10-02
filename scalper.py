@@ -282,12 +282,13 @@ def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[flo
 class MarketMaker:
     def __init__(self, cli, ledger, *, edge=0.01, size=300, max_inventory=1000, take=0.01, max_hold_s=1800,
                  min_spread=0.02, max_markets=8, requote_s=15, live=False, place=None,
-                 min_price=0.10, max_price=0.90):
+                 min_price=0.10, max_price=0.90, max_capital=float("inf")):
         self.cli, self.ledger, self.live = cli, ledger, live
         self.edge, self.size, self.max_inventory, self.take = edge, size, max_inventory, take
         self.max_hold_s, self.min_spread, self.max_markets, self.requote_s = max_hold_s, min_spread, max_markets, requote_s
         self.place = place                 # place_tracked-compatible callable (writes intents)
         self.min_price, self.max_price = min_price, max_price
+        self.max_capital = max_capital          # total MM inventory; at the cap only exits are quoted
         self.open: Dict[int, List[dict]] = {}          # market -> open orders (from portfolio)
         self.quoted_at: Dict[int, float] = {}
         self.active: set = set()                        # markets with MM quotes or inventory
@@ -360,8 +361,9 @@ class MarketMaker:
             return {}
         if time.time() - self.quoted_at.get(m, 0) < self.requote_s:
             return {}
+        size = self.size if self.ledger.gross() < self.max_capital else 0
         want = mm_quotes(book, fair, inv, self.ledger.avg_yes(m), self.ledger.held_for(m), edge=self.edge,
-                         size=self.size, max_inventory=self.max_inventory, take=self.take,
+                         size=size, max_inventory=self.max_inventory, take=self.take,
                          max_hold_s=self.max_hold_s, min_spread=self.min_spread,
                          min_price=self.min_price, max_price=self.max_price)
         have = {}
