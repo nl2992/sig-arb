@@ -258,6 +258,8 @@ def main(argv=None):
     st.add_argument("--mode", choices=["auto", "confirm", "signal"], default="auto")
     st.add_argument("--strategy", default="arb,fv,ll,mm")
     st.add_argument("--dry", action="store_true", help="run without --live (no real orders)")
+    st.add_argument("--wait", action="store_true",
+                    help="retry the readiness check every 2 min (up to 6 h) and start once SIG is healthy")
     st.add_argument("--release-kill-switch", action="store_true",
                     help="remove logs/KILL_SWITCH first (only do this after reviewing its reason)")
     sub.add_parser("stop", help="stop bot, dashboard and supervisor")
@@ -281,13 +283,23 @@ def main(argv=None):
         if a.release_kill_switch and bot.KILL_SWITCH.exists():
             print("releasing kill switch:", bot.KILL_SWITCH.read_text().splitlines()[0])
             bot.KILL_SWITCH.unlink()
-        rows = check(renew=True)
-        blocking = [r for r in rows if r["status"] in ("FAIL", "TODO")]
-        for r in blocking:
-            print(f"[{r['status']}] {r['check']}: {r['detail']}" + (f"\n   -> {r['action']}" if r["action"] else ""))
-        if blocking:
-            print("not starting; fix the items above (kill switch: --release-kill-switch after review)")
-            return 1
+        import time as _t
+        deadline = _t.time() + 6 * 3600
+        while True:
+            rows = check(renew=True)
+            blocking = [r for r in rows if r["status"] in ("FAIL", "TODO")]
+            for r in blocking:
+                print(f"[{r['status']}] {r['check']}: {r['detail']}" + (f"\n   -> {r['action']}" if r["action"] else ""),
+                      flush=True)
+            if not blocking:
+                break
+            # only SIG being unreachable is worth waiting out; anything else needs a person
+            transient = all(r["check"] == "sig_read_access" for r in blocking)
+            if not (a.wait and transient and _t.time() < deadline):
+                print("not starting; fix the items above (kill switch: --release-kill-switch after review)")
+                return 1
+            print(_t.strftime("%H:%M:%S"), "SIG not healthy yet; retrying in 2 min", flush=True)
+            _t.sleep(120)
         args = ["--mode", a.mode, "--interval", "3", "--strategy", a.strategy] + ([] if a.dry else ["--live"])
         return supervisor.start(args)
 

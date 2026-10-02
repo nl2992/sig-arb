@@ -40,7 +40,16 @@ def load_markets(cli, cache: pathlib.Path = MARKETS_CACHE, max_age_s: float = 6 
                 return j["markets"]
         except (OSError, ValueError, KeyError):
             pass
-    markets = [{"id": m["id"], "title": m["title"]} for m in cli.markets()]
+    try:
+        markets = [{"id": m["id"], "title": m["title"]} for m in cli.markets()]
+    except Exception:
+        try:                                    # SIG erroring: a stale list beats no list
+            stale = json.loads(cache.read_text())["markets"]
+        except (OSError, ValueError, KeyError):
+            raise
+        if not stale:
+            raise
+        return stale
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_suffix(".tmp")
     tmp.write_text(json.dumps({"fetched_at": time.time(), "markets": markets}))
