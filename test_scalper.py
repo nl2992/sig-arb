@@ -209,3 +209,49 @@ class PriceBandTests(Tmp):
         self.assertTrue(mm.eligible(1, 0, 0.45))
         mm.active.add(2)
         self.assertTrue(mm.eligible(2, 0, 0.03))                          # still managed until flat
+
+
+class WorkerTests(Tmp):
+    def make(self, kill=lambda: False):
+        cli = mock.Mock()
+        order = {"id": "t1", "marketId": 1, "side": "yes", "action": "buy", "priceLimit": 0.01, "quantity": 50}
+        cli.portfolio.side_effect = [{"openOrders": [], "holdings": []},          # first sync
+                                     {"openOrders": [order]}, {"openOrders": []}]  # self-test
+        placed = []
+
+        def place(cli_, strategy, m, ex, side, px, qty, live, coid, holdings=None):
+            placed.append((m, side, px))
+            return {"filledQuantity": 0}
+        mm = scalper.MarketMaker(cli, self.led, live=True, place=place, requote_s=0)
+        return mm, cli, placed
+
+    def wait(self, cond, timeout=5):
+        end = time.time() + timeout
+        while time.time() < end and not cond():
+            time.sleep(0.02)
+        return cond()
+
+    def test_worker_self_tests_then_quotes(self):
+        mm, cli, placed = self.make()
+        with mock.patch.object(scalper.time, "sleep"):
+            mm.start_worker(lambda: {}, lambda: False, poll_s=999)
+            b = book(1, bids=[(0.40, 100)], asks=[(0.46, 100)])
+            mm.submit(b, 0.43, False, 0.0, True)
+            self.assertTrue(self.wait(lambda: mm.tested))
+            self.assertTrue(mm.enabled)
+            mm.submit(b, 0.43, False, 0.0, True)
+            self.assertTrue(self.wait(lambda: len(placed) >= 3))      # self-test order + bid + ask
+            mm.stop_worker(5)
+        self.assertFalse(mm._thread.is_alive())
+        self.assertIn((1, "BUY", 0.405), placed)
+        self.assertIn((1, "SELL", 0.455), placed)
+
+    def test_kill_switch_pulls_quotes_on_worker(self):
+        mm, cli, _ = self.make()
+        cli.portfolio.side_effect = None
+        cli.portfolio.return_value = {"openOrders": [{"id": "q", "marketId": 1, "side": "yes", "action": "buy",
+                                                      "priceLimit": 0.4, "quantity": 300}], "holdings": []}
+        mm.start_worker(lambda: {}, lambda: True, poll_s=0)
+        self.assertTrue(self.wait(lambda: cli.cancel.called))
+        mm.stop_worker(5)
+        cli.cancel.assert_any_call("q", dry_run=False)

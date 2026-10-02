@@ -492,32 +492,25 @@ def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=N
 
 def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: dict, a,
                      skip: set = frozenset()) -> None:
-    """Requote every eligible market in one freshly read race."""
-    global _mm_selftest_done
+    """Queue requotes for one freshly read race; the MM worker thread sends the orders."""
     for m in snap.markets:
         if m["id"] in skip:
             continue
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
         other = ledgers["fv"].position(m["id"]) + ledgers["ll"].position(m["id"])
-        if not _mm_selftest_done:
-            if other or holdings.get(m["id"]) or not book.bids or book.bids[0][0] < 0.05:
-                continue
-            with critical():
-                mm.enabled = mm.self_test(book, holdings.get(m["id"], 0.0))
-            _mm_selftest_done = True
-            continue
         fair = feed.mid(m["id"]) if feed is not None else None
         if fair is None and refs is not None:
             f_ = refs.fair(m["id"])
             fair = f_["fair"] if f_ else None
-        if not mm.eligible(m["id"], other, fair):
+        # the self-test needs a market nobody holds with a real bid well above 0.01
+        test_ok = not other and not holdings.get(m["id"]) and bool(book.bids) and book.bids[0][0] >= 0.05
+        if mm.tested and not mm.eligible(m["id"], other, fair):
+            continue
+        if not mm.tested and not test_ok:
             continue
         mv = feed.move(m["id"], 120) if feed is not None else None
         moving = mv is not None and abs(mv) >= 0.01
-        with critical():
-            act = mm.on_book(book, fair, moving, holdings.get(m["id"], 0.0))
-        if act.get("placed") or act.get("cancelled") or act.get("pulled"):
-            log.info("MM #%s fair %s: %s", m["id"], None if fair is None else round(fair, 4), act)
+        mm.submit(book, fair, moving, holdings.get(m["id"], 0.0), test_ok)
 
 
 _mm_selftest_done = False
@@ -716,8 +709,8 @@ def main():
                                  take=a.mm_take, max_hold_s=a.mm_max_hold, min_spread=a.mm_min_spread,
                                  max_markets=a.mm_max_markets, place=place_tracked,
                                  min_price=a.mm_min_price, max_price=a.mm_max_price)
-        mm.enabled = False                   # until the live self-test passes
-    mm_tested, mm_synced = False, 0.0
+        mm.enabled = False                   # until the live self-test passes (in the worker)
+    worker_live = {"live": False}
     if strategies & {"fv", "mm"}:
         refs = fair_value.ReferencePrices()
         log.info("reference prices: %d approved mappings; first refresh...", len(refs.matches))
@@ -738,14 +731,12 @@ def main():
                 rows.setdefault(int(k), {"qty": 0.0})["qty"] += float(row.get("qty", 0))
         return holdings_check.expected_holdings(rows, EXEC_LOG)
 
-    def mm_sync(port=None):
-        nonlocal mm_synced
-        port = port or cli.portfolio()
-        for f_ in mm.sync(port, others_expected("mm")):
-            log.info("MM FILL #%s %s %g @ %s", f_["market_id"], f_["yes_side"], f_["qty"], f_["price"])
-            journal_single("mm", f_["market_id"], f_["yes_side"], f_["qty"], f_["price"], "FILL", live)
-        mm_synced = time.time()
-        return port
+    def mm_fill(f_):
+        log.info("MM FILL #%s %s %g @ %s", f_["market_id"], f_["yes_side"], f_["qty"], f_["price"])
+        journal_single("mm", f_["market_id"], f_["yes_side"], f_["qty"], f_["price"], "FILL", worker_live["live"])
+
+    if mm is not None:
+        mm.start_worker(lambda: others_expected("mm"), kill_switch_engaged, on_fill=mm_fill, poll_s=a.mm_poll)
 
     balance, balance_at = None, 0.0
     book_cache = {}
@@ -780,8 +771,11 @@ def main():
                         risk.gross = holdings_check.deployed(port)
                         acct = holdings_check.actual_holdings(port)
                         if mm is not None:
-                            mm_sync(port)
-                        rep = checker.check(port, cli.transactions)
+                            with mm.lock:              # fills and reconciliation see one snapshot
+                                mm.sync_with(port)
+                                rep = checker.check(port, cli.transactions)
+                        else:
+                            rep = checker.check(port, cli.transactions)
                         if not rep["ok"]:
                             log.warning("holdings check: %s", json.dumps(rep))
                     except Exception as e:
@@ -790,17 +784,12 @@ def main():
                 budget = a.budget or balance or 100_000
                 scan = {}
                 if mm is not None:
-                    mm.live = live
-                    if (kill_switch_engaged() or not live) and any(mm.open.values()):
-                        with critical():
-                            log.warning("mm: pulled %d quote(s) (kill switch / not live)", mm.cancel_all())
-                    elif time.time() - mm_synced > a.mm_poll:
-                        mm_sync()
+                    mm.live = worker_live["live"] = live     # the worker pulls quotes when not live
                 if feed is not None:
                     hot_mkts = set(feed.movers(min(a.ll_move, 0.01), a.ll_lookback))
                     hot_mkts |= {int(k) for k, r in ll_ledger.rows.items() if r.get("qty")}
                     if mm is not None:
-                        hot_mkts |= mm.active
+                        hot_mkts |= mm.active_snapshot
                     scanner.boost = {r for r in map(scanner.race_of, hot_mkts) if r}
                 # Each race is evaluated, and traded, as soon as all its books arrive.
                 for race, snap in scanner.stream(full=full_sweep, stats=scan):
@@ -867,7 +856,7 @@ def main():
                     if race_traded:
                         continue
                     touched = set()
-                    mm_busy = set(mm.active) if mm is not None else set()
+                    mm_busy = set(mm.active_snapshot) if mm is not None else set()
                     if "ll" in strategies:
                         for k, v in run_leadlag(cli, snap, feed, ll_ledger, a, live, risk, acct,
                                                 skip=mm_busy | {int(k) for k, r in ledger.rows.items() if r.get("qty")},
@@ -901,8 +890,7 @@ def main():
                      ll={"gross": round(ll_ledger.gross(), 2), "positions": sum(1 for r in ll_ledger.rows.values() if r.get("qty")),
                          "realized": round(sum(r.get("realized", 0) for r in ll_ledger.rows.values()), 2),
                          "poly_last_poll": feed.last_poll if feed else None},
-                     mm=None if mm is None else {"enabled": mm.enabled, "markets": sorted(mm.active),
-                         "open_quotes": sum(len(v) for v in mm.open.values()),
+                     mm=None if mm is None else {"enabled": mm.enabled, "tested": mm.tested, "markets": sorted(mm.active_snapshot), **mm.stats,
                          "inventory_capital": round(mm_ledger.gross(), 2),
                          "realized": round(sum(r.get("realized", 0) for r in mm_ledger.rows.values()), 2)},
                          fv=None if refs is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
@@ -914,6 +902,8 @@ def main():
         # SIGINT/SIGTERM cannot cut this cleanup short (that left two quotes live on 1 Oct).
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if mm is not None:
+            mm.stop_worker(60)                 # finish the order in flight, then stop
         try:
             log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
         except Exception as e:

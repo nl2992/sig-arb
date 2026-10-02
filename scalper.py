@@ -293,6 +293,10 @@ class MarketMaker:
         self.active: set = set()                        # markets with MM quotes or inventory
         self.enabled = True
         self.last_quote_px: Dict[tuple, float] = {}    # (market, side) -> price of our last quote
+        self.lock = threading.RLock()
+        self.active_snapshot: frozenset = frozenset()
+        self.stats = {"open_quotes": 0, "errors": 0, "requests": 0}
+        self.tested = False
 
     # -- account sync: open orders + inventory inferred from holdings
     def sync(self, portfolio: dict, other_expected: Dict[int, float]) -> List[dict]:
@@ -340,10 +344,11 @@ class MarketMaker:
     def eligible(self, m: int, other_positions: float, fair: Optional[float] = None) -> bool:
         if not self.enabled or other_positions:
             return False
-        if m in self.active:
+        active = self.active_snapshot or frozenset(self.active)
+        if m in active:
             return True                      # keep managing (exits, pulling) what we already quote
         in_band = fair is not None and self.min_price <= fair <= self.max_price
-        return in_band and len(self.active) < self.max_markets
+        return in_band and len(active) < self.max_markets
 
     def on_book(self, book: Book, fair: Optional[float], moving: bool, holding: float) -> dict:
         """Requote one market. Returns a summary of actions."""
@@ -390,6 +395,86 @@ class MarketMaker:
         if want or inv:
             self.active.add(m)
         return actions
+
+    # -- worker thread: all MM order traffic runs here, never on the scan loop ------------
+    def start_worker(self, others_expected, kill_switch, on_fill=None, poll_s: float = 20) -> threading.Thread:
+        """others_expected(): expected holdings of every other strategy; kill_switch(): bool."""
+        self.lock = getattr(self, "lock", None) or threading.RLock()
+        self._pending: Dict[int, tuple] = {}
+        self._qlock = threading.Lock()
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._others, self._kill, self._on_fill, self._poll_s = others_expected, kill_switch, on_fill, poll_s
+        self._last_sync = 0.0
+        self.tested = False
+        self.active_snapshot: frozenset = frozenset()
+        self.stats = {"open_quotes": 0, "errors": 0, "requests": 0}
+        self._thread = threading.Thread(target=self._run, name="market-maker", daemon=True)
+        self._thread.start()
+        return self._thread
+
+    def submit(self, book: Book, fair: Optional[float], moving: bool, holding: float, test_ok: bool) -> None:
+        """Queue a requote (newest per market wins). Cheap; called from the scan loop."""
+        with self._qlock:
+            self._pending[book.market_id] = (book, fair, moving, holding, test_ok, time.time())
+        self._wake.set()
+
+    def sync_with(self, portfolio: dict) -> List[dict]:
+        """Sync from a portfolio snapshot the caller already has (holds the MM lock)."""
+        with self.lock:
+            fills = self.sync(portfolio, self._others())
+            self._after_change()
+        for f in fills:
+            if self._on_fill:
+                self._on_fill(f)
+        return fills
+
+    def _after_change(self) -> None:
+        self.active_snapshot = frozenset(self.active)
+        self.stats["open_quotes"] = sum(len(v) for v in self.open.values())
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._wake.wait(1.0)
+            self._wake.clear()
+            try:
+                if time.time() - self._last_sync > self._poll_s:
+                    self.sync_with(self.cli.portfolio())
+                    self._last_sync = time.time()
+                with self._qlock:
+                    pending, self._pending = self._pending, {}
+                if self._kill() or not self.live:
+                    if any(self.open.values()):
+                        with self.lock:
+                            n = self.cancel_all()
+                            self._after_change()
+                        log.warning("mm: pulled %d quote(s) (kill switch / not live)", n)
+                    continue
+                for m, (book, fair, moving, holding, test_ok, at) in pending.items():
+                    if self._stop.is_set() or self._kill():
+                        break
+                    if time.time() - at > 30:            # book too old to quote from
+                        continue
+                    with self.lock:
+                        if not self.tested:
+                            if test_ok:
+                                self.enabled = self.self_test(book, holding)
+                                self.tested = True
+                            continue
+                        act = self.on_book(book, fair, moving, holding)
+                        self._after_change()
+                    self.stats["requests"] += 1
+                    if act.get("placed") or act.get("cancelled") or act.get("pulled"):
+                        log.info("MM #%s fair %s: %s", m, None if fair is None else round(fair, 4), act)
+            except Exception as e:
+                self.stats["errors"] += 1
+                log.warning("mm worker: %s", e)
+
+    def stop_worker(self, timeout: float = 60) -> None:
+        if getattr(self, "_thread", None):
+            self._stop.set()
+            self._wake.set()
+            self._thread.join(timeout)
 
     def self_test(self, book: Book, holding: float) -> bool:
         """Place a resting order that cannot fill, find it, cancel it, confirm it is gone."""
