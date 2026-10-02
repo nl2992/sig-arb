@@ -105,7 +105,7 @@ class BotSafetyTests(unittest.TestCase):
 
     def test_limits_only_tighten(self):
         limits = gates.load_limits("config/risk_limits.json")
-        a = argparse.Namespace(max_gross=60_000, max_per_race=10_000, min_edge=0.0)
+        a = argparse.Namespace(max_gross=float("inf"), max_per_race=10_000, min_edge=0.0)
         bot.apply_limits(a, limits)
         self.assertEqual(a.max_gross, limits["venue_exposure"]["sig"])
         self.assertEqual(a.max_per_race, min(limits["per_trade_capital"], limits["event_exposure"]))

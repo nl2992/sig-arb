@@ -34,19 +34,26 @@ def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], 
     hold = {int(h["marketId"]): h for h in portfolio.get("holdings", [])
             if str(h.get("settlementOption", "YES")).upper() == "YES" and float(h.get("quantity") or 0)}
     cash = float(portfolio.get("cashBalance") or 0)
-    parts = []                                   # (strategy, market, qty, cost)
+    # Value every market from its NET holding (SIG nets YES against NO in one market, so an
+    # fv YES buy against an arb NO leg is a partial unwind, not a second position), then
+    # attribute the net to the strategies holding the net side, pro rata to their size.
+    parts = []                                   # (strategy, market, signed qty, cost)
+    netted = []
     for m, h in hold.items():
-        q_total, avg = float(h["quantity"]), float(h.get("averagePricePaid") or 0)
-        rest, other_cost = q_total, 0.0
-        for name, led in ledgers.items():
-            q = led.position(m)
-            if q:
-                parts.append((name, m, q, led.capital(m)))
-                rest -= q
-                other_cost += led.capital(m)
+        q_net, avg = float(h["quantity"]), float(h.get("averagePricePaid") or 0)
+        cost_net = abs(q_net) * avg
+        by = {name: led.position(m) for name, led in ledgers.items() if led.position(m)}
+        rest = q_net - sum(by.values())
         if abs(rest) > 0.5:
-            total_cost = abs(q_total) * avg
-            parts.append(("arb", m, rest, max(0.0, total_cost - other_cost) if other_cost else abs(rest) * avg))
+            by["arb"] = rest
+        same = {k: v for k, v in by.items() if (v > 0) == (q_net > 0)}
+        for k, v in by.items():
+            if k not in same:
+                netted.append({"strategy": k, "market_id": m, "qty": round(v, 2)})
+        total = sum(abs(v) for v in same.values()) or 1.0
+        for k, v in same.items():
+            share = abs(v) / total
+            parts.append((k, m, q_net * share, cost_net * share))
 
     races: Dict[str, dict] = {}
     strat = collections.defaultdict(lambda: {"markets": 0, "cost": 0.0, "mark": 0.0, "ev": 0.0})
@@ -118,6 +125,7 @@ def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], 
                  "unhedged_races": sum(1 for r in race_rows if not r["hedged"])},
         "races": race_rows,
         "positions": sorted(rows, key=lambda x: -x["cost"]),
+        "netted": netted,
         "open_orders": len(portfolio.get("openOrders", [])),
     }
 

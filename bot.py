@@ -598,7 +598,8 @@ def main():
     ap.add_argument("--fee", type=float, default=0.0)
     ap.add_argument("--budget", type=float, default=None, help="capital per signal (default live balance)")
     ap.add_argument("--max-per-race", type=float, default=10_000)
-    ap.add_argument("--max-gross", type=float, default=60_000)
+    ap.add_argument("--max-gross", type=float, default=float("inf"),
+                    help="overall cap; config/risk_limits.json venue_exposure.sig applies (CLI can only tighten)")
     ap.add_argument("--max-qty", type=float, default=None)
     ap.add_argument("--cooldown", type=float, default=30, help="sec before re-firing the same race")
     ap.add_argument("--chase-ticks", type=int, default=2)
@@ -623,7 +624,7 @@ def main():
     ap.add_argument("--fv-unit", type=float, default=500,
                     help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
     ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
-    ap.add_argument("--fv-max-gross", type=float, default=45000,
+    ap.add_argument("--fv-max-gross", type=float, default=60000,
                     help="fv: cap on fair-value capital (leaves room for ll/mm under the venue cap)")
     ap.add_argument("--fv-tp", type=float, default=0.03, help="fv: take profit vs entry")
     ap.add_argument("--fv-stop", type=float, default=0.05,

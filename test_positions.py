@@ -42,5 +42,20 @@ class PositionsTests(unittest.TestCase):
         self.assertAlmostEqual(rep["account"]["realized"], 98515.1 + 464.6 + 535.3 + 475 - 100000, places=1)
 
 
+class NettingTests(PositionsTests):
+    def test_opposite_strategy_legs_are_valued_net(self):
+        # arb holds D NO 2043, fv bought D YES 1110 against it: the account holds D NO 933
+        self.leds["fv"].record(370, "BUY", 1110, 0.92)
+        port = {"cashBalance": 0, "openOrders": [], "holdings": [
+            h(370, "Democratic", "Massachusetts Governor", -933, 0.053, 0.95),
+            h(371, "Republican", "Massachusetts Governor", -2043, 0.925, 0.10)]}
+        rep = positions.build(port, self.leds, lambda m: None)
+        self.assertAlmostEqual(rep["account"]["open_cost"], 933 * 0.053 + 2043 * 0.925, places=1)
+        self.assertEqual(rep["netted"], [{"strategy": "fv", "market_id": 370, "qty": 1110.0}])
+        race = rep["races"][0]
+        self.assertAlmostEqual(race["if_dem"], 2043 - (933 * 0.053 + 2043 * 0.925), places=1)
+        self.assertAlmostEqual(race["if_rep"], 933 - (933 * 0.053 + 2043 * 0.925), places=1)
+
+
 if __name__ == "__main__":
     unittest.main()
