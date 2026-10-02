@@ -118,7 +118,7 @@ class Child:
         if self.proc and self.proc.poll() is None:
             self.proc.send_signal(signal.SIGINT)
             try:
-                self.proc.wait(30)
+                self.proc.wait(75)           # in-flight book reads + order cancels
             except subprocess.TimeoutExpired:
                 self.proc.terminate()
 
@@ -207,12 +207,12 @@ def stop() -> int:
         print("supervisor is not running")
         return 0
     os.kill(pid, signal.SIGTERM)
-    for _ in range(360):
+    for _ in range(480):
         if not pid_alive(pid):
             print("stopped bot, dashboard and supervisor")
             return 0
         time.sleep(0.25)
-    print(f"supervisor pid {pid} did not stop within 90s")
+    print(f"supervisor pid {pid} did not stop within 120s")
     return 1
 
 

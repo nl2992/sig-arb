@@ -144,3 +144,14 @@ class DeferredStopTests(unittest.TestCase):
         import bot
         with self.assertRaises(KeyboardInterrupt):
             bot._on_stop_signal(2, None)
+
+
+class SweepTests(unittest.TestCase):
+    def test_cancel_all_open_orders(self):
+        import bot
+        from unittest import mock
+        cli = mock.Mock()
+        cli.portfolio.return_value = {"openOrders": [{"id": "a", "marketId": 1}, {"id": "b", "marketId": 2}]}
+        cli.cancel.side_effect = [None, RuntimeError("gone")]
+        self.assertEqual(bot.cancel_all_open_orders(cli), 1)
+        self.assertEqual([c.args[0] for c in cli.cancel.call_args_list], ["a", "b"])

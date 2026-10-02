@@ -489,6 +489,19 @@ def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: di
 _mm_selftest_done = False
 
 
+def cancel_all_open_orders(cli: Client) -> int:
+    """Cancel every resting order on the account. The bot never means to keep orders
+    across a restart, so this runs at startup (crash leftovers) and at shutdown."""
+    n = 0
+    for o in cli.portfolio().get("openOrders", []):
+        try:
+            cli.cancel(o["id"], dry_run=False)
+            n += 1
+        except Exception as e:
+            log.warning("cancel failed for order %s on #%s: %s", o.get("id"), o.get("marketId"), e)
+    return n
+
+
 # ---------------------------------------------------------- limits / status
 def apply_limits(a, limits: dict):
     """Tighten CLI caps to config/risk_limits.json; the file always wins when stricter."""
@@ -639,6 +652,14 @@ def main():
     checker = holdings_check.HoldingsCheck(ledgers, lambda why: engage_kill_switch(why, actor="holdings_check"),
                                            intent_log=INTENT_LOG, exec_log=EXEC_LOG)
     acct = {}                                # market_id -> signed YES holding (minute snapshot)
+    if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
+        try:
+            n = cancel_all_open_orders(cli)
+            if n:
+                log.warning("startup: cancelled %d resting order(s) left by a previous run", n)
+                time.sleep(2)
+        except Exception as e:
+            log.error("startup: could not sweep resting orders: %s", e)
     try:
         port = cli.portfolio()
         acct = holdings_check.actual_holdings(port)
@@ -843,14 +864,14 @@ def main():
                                                          "references": refs.last_refresh})
             time.sleep(max(0.0, a.interval - (time.time() - t0)))
     finally:
-        # Never leave resting quotes behind: re-read open orders and cancel them.
-        if mm is not None:
-            try:
-                mm.sync(cli.portfolio(), others_expected("mm"))
-                n = mm.cancel_all()
-                log.info("mm: cancelled %d resting quote(s) on shutdown", n)
-            except Exception as e:
-                log.error("mm: could not cancel quotes on shutdown: %s", e)
+        # Never leave resting orders behind. Further stop signals are ignored so a second
+        # SIGINT/SIGTERM cannot cut this cleanup short (that left two quotes live on 1 Oct).
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
+        except Exception as e:
+            log.error("shutdown: could not cancel resting orders: %s", e)
 
 
 if __name__ == "__main__":
