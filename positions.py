@@ -30,7 +30,42 @@ def _side_value(q: float, p_yes: float) -> float:
     return p_yes if q > 0 else 1 - p_yes
 
 
-def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], Optional[float]]) -> dict:
+def arb_costs(exec_log: pathlib.Path = None, manual_log: pathlib.Path = None) -> Dict[int, list]:
+    """Per market [signed YES qty, cost] of arb legs from the arb's own fills. The account's
+    average price is for the NET side, which differs from an arb leg wherever another
+    strategy holds the opposite side (e.g. Nebraska #281: net long YES, arb leg NO)."""
+    import holdings_check as hc
+    out: Dict[int, list] = {}
+
+    def add(m, q, yes_px):
+        row = out.setdefault(int(m), [0.0, 0.0])
+        if row[0] and (row[0] > 0) != (q > 0):           # a reduction: release cost pro rata
+            closed = min(abs(q), abs(row[0]))
+            row[1] -= row[1] * closed / abs(row[0])
+            row[0] += closed if q > 0 else -closed
+            q = q + closed if q < 0 else q - closed
+        if q:
+            row[1] += abs(q) * (yes_px if q > 0 else 1 - yes_px)
+            row[0] += q
+    for r in hc._rows(exec_log or hc.EXEC_LOG):
+        res = r.get("result") or {}
+        if not r.get("live") or res.get("strategy"):
+            continue
+        for leg in res.get("legs", []):
+            if leg.get("dryRun") or leg.get("repair") or not leg.get("filled"):
+                continue
+            q = leg["filled"] if leg["side"] == "BUY" else -leg["filled"]
+            add(leg["market"], q, float(leg.get("avg") or leg.get("limit")))
+    for r in hc._rows(manual_log or hc.MANUAL_LOG):
+        if r.get("action") == "journal_backfill":
+            add(r["market_id"], float(r["qty"]), float(r.get("price_yes") or 0.5))
+        elif r.get("action") == "close" and r.get("status") == "SENT":
+            add(r["market_id"], float(r["after"]) - float(r["before"]), float(r.get("limit") or 0.5))
+    return out
+
+
+def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], Optional[float]],
+          arb_cost_fn: Optional[Callable[[], Dict[int, list]]] = None) -> dict:
     hold = {int(h["marketId"]): h for h in portfolio.get("holdings", [])
             if str(h.get("settlementOption", "YES")).upper() == "YES" and float(h.get("quantity") or 0)}
     cash = float(portfolio.get("cashBalance") or 0)
@@ -100,6 +135,7 @@ def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], 
     # Arbs count their locked complete-set value; the others their value at fair.
     for k in strat:
         strat[k]["ev"] = 0.0
+    arb_journal = (arb_cost_fn or arb_costs)()
     arb_by_race = collections.defaultdict(list)
     for m, h in hold.items():
         q_net, avg = float(h["quantity"]), float(h.get("averagePricePaid") or 0)
@@ -116,7 +152,10 @@ def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], 
             if price is not None:
                 strat[name]["ev"] += abs(q) * _side_value(q, price) - led.capital(m)
         if abs(rest) > 0.5:
-            arb_by_race[race].append((party, rest, abs(rest) * avg))
+            journal = arb_journal.get(m)
+            cost = (journal[1] * abs(rest) / abs(journal[0])
+                    if journal and abs(journal[0]) > 0.5 and (journal[0] > 0) == (rest > 0) else abs(rest) * avg)
+            arb_by_race[race].append((party, rest, cost))
     if arb_by_race:
         strat["arb"]["ev"] = sum(min(race_pnl({"positions": legs}, w)
                                      for w in ("Democratic", "Republican", "Independent", "other"))

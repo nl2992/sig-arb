@@ -29,7 +29,7 @@ class PositionsTests(unittest.TestCase):
                 "holdings": [h(1, "Republican", "Nevada Governor", -1010, 0.46, 0.55),
                              h(2, "Democratic", "Nevada Governor", -1010, 0.53, 0.47),
                              h(3, "Republican", "Delaware Senate", -500, 0.95, 0.04)]}
-        rep = positions.build(port, self.leds, lambda m: {3: 0.01}.get(m))
+        rep = positions.build(port, self.leds, lambda m: {3: 0.01}.get(m), arb_cost_fn=dict)
         self.assertAlmostEqual(rep["strategies"]["arb"]["ev"], 10.1, places=1)       # locked
         self.assertAlmostEqual(rep["strategies"]["fv"]["ev"], 500 * 0.99 - 475, places=1)
         races = {r["race"]: r for r in rep["races"]}
@@ -49,12 +49,25 @@ class NettingTests(PositionsTests):
         port = {"cashBalance": 0, "openOrders": [], "holdings": [
             h(370, "Democratic", "Massachusetts Governor", -933, 0.053, 0.95),
             h(371, "Republican", "Massachusetts Governor", -2043, 0.925, 0.10)]}
-        rep = positions.build(port, self.leds, lambda m: None)
+        rep = positions.build(port, self.leds, lambda m: None, arb_cost_fn=dict)
         self.assertAlmostEqual(rep["account"]["open_cost"], 933 * 0.053 + 2043 * 0.925, places=1)
         self.assertEqual(rep["netted"], [{"strategy": "fv", "market_id": 370, "qty": 1110.0}])
         race = rep["races"][0]
         self.assertAlmostEqual(race["if_dem"], 2043 - (933 * 0.053 + 2043 * 0.925), places=1)
         self.assertAlmostEqual(race["if_rep"], 933 - (933 * 0.053 + 2043 * 0.925), places=1)
+
+
+class ArbCostTests(PositionsTests):
+    def test_arb_leg_cost_from_its_own_fills_not_net_average(self):
+        # Nebraska #281: arb holds R NO 1041 bought at 0.30; fv holds R YES 2000 -> net long YES 959 @ 0.715
+        self.leds["fv"].record(281, "BUY", 2000, 0.715)
+        port = {"cashBalance": 0, "openOrders": [], "holdings": [
+            h(281, "Republican", "Nebraska Senate", 959, 0.715, 0.72),
+            h(279, "Democratic", "Nebraska Senate", -1041, 0.953, 0.03),
+            h(280, "Independent", "Nebraska Senate", -1041, 0.726, 0.27)]}
+        costs = {281: [-1041.0, 1041 * 0.30], 279: [-1041.0, 1041 * 0.953], 280: [-1041.0, 1041 * 0.726]}
+        rep = positions.build(port, self.leds, lambda m: None, arb_cost_fn=lambda: costs)
+        self.assertAlmostEqual(rep["strategies"]["arb"]["ev"], 2 * 1041 - 1041 * (0.30 + 0.953 + 0.726), places=1)
 
 
 if __name__ == "__main__":
