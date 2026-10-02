@@ -312,3 +312,36 @@ class SharedBooksTests(unittest.TestCase):
         with um.patch.object(Source, "_fetch_snapshot", return_value=snap) as fetch:
             source.get()
         fetch.assert_called_once()
+
+
+class DepthRuleTests(unittest.TestCase):
+    def snap(self, d_bids, r_bids):
+        lv = lambda ex, bids: [{"exchangeId": ex, "side": "BUY", "isYes": True, "price": p, "quantity": q} for p, q in bids] + \
+            [{"exchangeId": ex, "side": "SELL", "isYes": True, "price": 0.99, "quantity": 10}]
+        return Snapshot("t", [{"id": 1, "title": "Will the Democratic Party win the VA-01 House race?"},
+                              {"id": 2, "title": "Will the Republican Party win the VA-01 House race?"}],
+                        {1: lv(1, d_bids), 2: lv(2, r_bids)})
+
+    def arb(self, snap, max_qty=None):
+        from arb_engine import group_markets, max_executable_arb
+        books = snap.books()
+        return max_executable_arb("VA-01 House race", [books[1], books[2]], "SELL_ALL", max_qty=max_qty)
+
+    a = argparse.Namespace(min_edge=0.0, fee=0.0, min_pnl=1, max_per_race=None)
+
+    def test_deep_legs_keep_full_size(self):
+        s = self.snap([(0.47, 5000)], [(0.555, 5000)])
+        r = self.arb(s, max_qty=1000)                       # capped by budget, levels 5x deeper
+        self.assertEqual(bot.depth_limited(r, s, self.a, None, 2.0).qty, 1000)
+
+    def test_thin_leg_shrinks_trade(self):
+        s = self.snap([(0.47, 5000)], [(0.555, 332)])      # VA-01: R bid only 332 deep
+        r = self.arb(s)
+        self.assertEqual(r.qty, 332)
+        sized = bot.depth_limited(r, s, self.a, None, 2.0)
+        self.assertEqual(sized.qty, 166)
+        self.assertGreaterEqual(min(bot.leg_depth(s.books()[l.market_id], "SELL_ALL", l.limit) for l in sized.legs), 2 * sized.qty)
+
+    def test_too_thin_skips(self):
+        s = self.snap([(0.47, 5000)], [(0.555, 15)])
+        self.assertIsNone(bot.depth_limited(self.arb(s), s, self.a, None, 2.0))

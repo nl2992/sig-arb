@@ -33,8 +33,9 @@ import pathlib
 import signal
 import time
 import uuid
+from typing import Optional
 
-from arb_engine import ArbResult, Book, breakeven_limit
+from arb_engine import ArbResult, Book, breakeven_limit, group_markets, max_executable_arb
 import fair_value
 import fast_scan
 import gates
@@ -274,6 +275,37 @@ def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2
         return {"status": "IMBALANCED", "qty": hedged, "legs": rep, "residual": residual, "run_id": run_id,
                 "parallel": True, "action": "flatten residual or work the short leg manually"}
     return {"status": "DONE", "qty": hedged, "legs": rep, "run_id": run_id, "parallel": True}
+
+
+def leg_depth(book: Book, direction: str, limit: float) -> float:
+    """Shares resting at or better than our limit on the side this leg takes."""
+    if direction == "SELL_ALL":                      # we sell YES into bids >= limit
+        return sum(q for p, q in book.bids if p >= limit - 1e-9)
+    return sum(q for p, q in book.asks if p <= limit + 1e-9)
+
+
+def depth_limited(r: ArbResult, snap: Snapshot, a, budget: Optional[float], ratio: float) -> Optional[ArbResult]:
+    """Shrink an arb until every leg has >= `ratio` x our size resting at or better than
+    its limit, so one competitor taking part of a level cannot leave us one-sided
+    (Nebraska and VA-01 legged that way on 1-2 Oct). None if nothing worthwhile is left."""
+    if not ratio:
+        return r
+    books = {m["id"]: Book.from_levels(m["id"], snap.levels[m["id"]]) for m in snap.markets}
+    legs = list(group_markets(snap.markets).get(r.race, {}).values())
+    for _ in range(6):
+        cap = min(leg_depth(books[l.market_id], r.direction, l.limit) for l in r.legs) / ratio
+        if r.qty <= cap + 1e-9:
+            return r if r.pnl >= a.min_pnl else None
+        cap = float(int(cap))
+        if cap < 10:
+            return None
+        kw = dict(min_edge=a.min_edge, fee_per_share=a.fee, max_qty=cap)
+        if budget:
+            kw["cash"] = min(budget, a.max_per_race) if getattr(a, "max_per_race", None) else budget
+        r = max_executable_arb(r.race, [books[m] for m in legs], r.direction, **kw)
+        if r is None:
+            return None
+    return None
 
 
 # ---------------------------------------------------------- risk gate
@@ -574,6 +606,8 @@ def main():
     ap.add_argument("--max-qty", type=float, default=None)
     ap.add_argument("--cooldown", type=float, default=30, help="sec before re-firing the same race")
     ap.add_argument("--chase-ticks", type=int, default=2)
+    ap.add_argument("--arb-depth-ratio", type=float, default=2.0,
+                    help="arb legs need this multiple of our size resting at or better than the limit (0 = off)")
     ap.add_argument("--near", type=int, default=0)
     ap.add_argument("--limits", type=pathlib.Path, default=RISK_LIMITS)
     ap.add_argument("--hot-band", type=float, default=0.005,
@@ -782,6 +816,14 @@ def main():
                     for r in fresh:
                         if a.mode == "signal":
                             continue
+                        sized = depth_limited(r, snap, a, budget, a.arb_depth_ratio)
+                        if sized is None:
+                            log.info("skip %s (legs too thin for %gx depth)", r.race, a.arb_depth_ratio)
+                            counts["skipped"] += 1
+                            continue
+                        if sized.qty < r.qty:
+                            log.info("%s: size %g -> %g for %gx leg depth", r.race, r.qty, sized.qty, a.arb_depth_ratio)
+                        r = sized
                         if kill_switch_engaged():
                             log.warning("kill switch engaged; not executing %s", r.race)
                             counts["skipped"] += 1
