@@ -907,7 +907,12 @@ def main():
         try:
             log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
         except Exception as e:
-            log.error("shutdown: could not cancel resting orders: %s", e)
+            log.error("shutdown: could not list resting orders (%s); cancelling known quotes", e)
+            if mm is not None:                 # SIG would not list them: use the worker's last view
+                try:
+                    log.info("shutdown: cancelled %d known quote(s)", mm.cancel_all())
+                except Exception as e2:
+                    log.error("shutdown: could not cancel known quotes: %s", e2)
 
 
 if __name__ == "__main__":

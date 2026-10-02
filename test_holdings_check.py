@@ -155,3 +155,23 @@ class SweepTests(unittest.TestCase):
         cli.cancel.side_effect = [None, RuntimeError("gone")]
         self.assertEqual(bot.cancel_all_open_orders(cli), 1)
         self.assertEqual([c.args[0] for c in cli.cancel.call_args_list], ["a", "b"])
+
+
+class RestingQuoteRecoveryTests(Base):
+    def test_mm_quote_that_filled_after_it_rested_is_recovered(self):
+        hc.write_intent("mm:293:ask:1", "mm", 293, "SELL", 0.64, 300, self.intents)
+        hc.resolve_intent("mm:293:ask:1", "DONE", self.intents, filled=0)       # rested, then filled later
+        mm_led = fv.Ledger(pathlib.Path(self.tmp.name) / "mm.json")
+        chk = hc.HoldingsCheck({"fv": self.ledger, "mm": mm_led}, self.kills.append, self.intents, self.execs, self.manual)
+        txns = [{"marketId": "293", "event_type": "trade", "quantity": -300, "price": 0.36, "createdAt": "2999-01-01T00:00:00Z"}]
+        rep = chk.check({"holdings": [holding(293, -300)]}, lambda: txns, immediate=True)
+        self.assertTrue(rep["ok"], rep)
+        self.assertEqual(mm_led.position(293), -300)
+        self.assertAlmostEqual(mm_led.avg_yes(293), 0.64)
+        self.assertEqual(self.kills, [])
+
+    def test_unfilled_resting_quote_is_not_closed_out(self):
+        hc.write_intent("mm:5:bid:1", "mm", 5, "BUY", 0.4, 300, self.intents)
+        hc.resolve_intent("mm:5:bid:1", "DONE", self.intents, filled=0)
+        self.check.check({"holdings": []}, lambda: [], immediate=True)
+        self.assertEqual(len(hc.in_doubt(self.intents)), 1)                    # still a candidate

@@ -64,8 +64,12 @@ def resolve_intent(coid: str, state: str, path: pathlib.Path = None, **fields) -
     _append(path or INTENT_LOG, {"ts": _now(), "client_order_id": coid, "state": state, **fields})
 
 
-def in_doubt(path: pathlib.Path = None) -> List[dict]:
-    """Intents whose latest state is SENT or UNKNOWN, oldest first."""
+def in_doubt(path: pathlib.Path = None, resting_strategies: tuple = ("mm",),
+             resting_window_s: float = 6 * 3600) -> List[dict]:
+    """Intents that may have filled without the bot booking it, oldest first:
+    latest state SENT or UNKNOWN, or a recent resting quote (strategy in
+    `resting_strategies`, DONE with less than its quantity filled), since a quote that
+    rested can fill later, e.g. while a restart could not cancel it."""
     latest: Dict[str, dict] = {}
     first: Dict[str, dict] = {}
     for row in _rows(path or INTENT_LOG):
@@ -74,8 +78,21 @@ def in_doubt(path: pathlib.Path = None) -> List[dict]:
             continue
         first.setdefault(coid, row)
         latest[coid] = row
-    return [{**first[c], "state": latest[c]["state"]} for c in first
-            if latest[c]["state"] in ("SENT", "UNKNOWN")]
+    now = dt.datetime.now(dt.timezone.utc)
+    out = []
+    for c in first:
+        state = latest[c]["state"]
+        if state in ("SENT", "UNKNOWN"):
+            out.append({**first[c], "state": state})
+        elif state == "DONE" and first[c].get("strategy") in resting_strategies:
+            filled = float(latest[c].get("filled") or 0)
+            try:
+                age = (now - dt.datetime.fromisoformat(first[c]["ts"])).total_seconds()
+            except (KeyError, ValueError):
+                continue
+            if filled < float(first[c].get("qty", 0)) and age <= resting_window_s:
+                out.append({**first[c], "state": state, "qty": float(first[c]["qty"]) - filled})
+    return out
 
 
 # ------------------------------------------------------------------ holdings
@@ -186,7 +203,7 @@ class HoldingsCheck:
                     diff.pop(m)
                 resolve_intent(it["client_order_id"], "RECOVERED", self.intent_log, filled=filled, price_yes=price)
                 recovered.append({"market_id": m, "filled": filled, "strategy": it["strategy"]})
-            elif not d:
+            elif not d and it["state"] in ("SENT", "UNKNOWN"):
                 resolve_intent(it["client_order_id"], "NOT_FILLED", self.intent_log)
         for m in list(self.strikes):
             if m not in diff:
