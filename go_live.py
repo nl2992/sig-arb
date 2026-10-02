@@ -42,7 +42,7 @@ def _row(name, status, detail, action=None):
     return {"check": name, "status": status, "detail": detail, "action": action}
 
 
-def check(offline: bool = False, limits_path: pathlib.Path = bot.RISK_LIMITS,
+def check(offline: bool = False, renew: bool = False, limits_path: pathlib.Path = bot.RISK_LIMITS,
           kill_switch: pathlib.Path = bot.KILL_SWITCH, capture_report: pathlib.Path = CAPTURE_REPORT,
           cli: Client | None = None) -> list:
     rows = []
@@ -57,6 +57,13 @@ def check(offline: bool = False, limits_path: pathlib.Path = bot.RISK_LIMITS,
 
     if cli.access_token and cli.profile_id:
         left = cli.token_seconds_left()
+        if renew and left is not None and left < 900 and cli.can_refresh:
+            try:
+                left = cli.refresh_session()       # same hourly renewal the bot does; saved to .env
+                rows.append(_row("sig_renewal", "PASS", f"session renewed; token valid {left / 60:.0f} min"))
+            except Exception as e:
+                rows.append(_row("sig_renewal", "WARN", f"renewal failed: {str(e)[:120]}",
+                                 "run python go_live.py set-cookie with a fresh login"))
         if left is None:
             rows.append(_row("sig_session", "WARN", "token present but its expiry is unreadable"))
         elif left < bot.TOKEN_MARGIN_S:
@@ -274,7 +281,7 @@ def main(argv=None):
         if a.release_kill_switch and bot.KILL_SWITCH.exists():
             print("releasing kill switch:", bot.KILL_SWITCH.read_text().splitlines()[0])
             bot.KILL_SWITCH.unlink()
-        rows = check()
+        rows = check(renew=True)
         blocking = [r for r in rows if r["status"] in ("FAIL", "TODO")]
         for r in blocking:
             print(f"[{r['status']}] {r['check']}: {r['detail']}" + (f"\n   -> {r['action']}" if r["action"] else ""))
