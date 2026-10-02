@@ -191,3 +191,21 @@ class BotHookTests(Tmp):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PriceBandTests(Tmp):
+    kw = dict(edge=0.01, size=300, max_inventory=1000, take=0.01, max_hold_s=1800, min_spread=0.02,
+              min_price=0.10, max_price=0.90)
+
+    def test_no_new_quotes_outside_band_but_exits_stay(self):
+        lo = book(bids=[(0.005, 100)], asks=[(0.04, 100)])
+        self.assertEqual(scalper.mm_quotes(lo, 0.0175, 0, None, 0, **self.kw), {})
+        q = scalper.mm_quotes(book(bids=[(0.94, 100)], asks=[(0.99, 100)]), 0.975, 211, 0.95, 0, **self.kw)
+        self.assertEqual(list(q), ["ask"])                               # exit for inventory only
+
+    def test_eligibility(self):
+        mm = scalper.MarketMaker(mock.Mock(), self.led, min_price=0.10, max_price=0.90)
+        self.assertFalse(mm.eligible(1, 0, 0.03))
+        self.assertTrue(mm.eligible(1, 0, 0.45))
+        mm.active.add(2)
+        self.assertTrue(mm.eligible(2, 0, 0.03))                          # still managed until flat

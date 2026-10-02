@@ -324,11 +324,14 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
                          (a.max_gross - risk.gross) if risk is not None else float("inf"))
         plan = fair_value.plan_market(book, refs.fair(m["id"]), ledger, threshold=a.fv_threshold,
                                       exit_band=a.fv_exit, max_per_market=a.fv_max_market,
-                                      gross_left=gross_left, unit=getattr(a, "fv_unit", None))
+                                      gross_left=gross_left, unit=getattr(a, "fv_unit", None),
+                                      tp=getattr(a, "fv_tp", None), stop=getattr(a, "fv_stop", None),
+                                      max_slip=getattr(a, "fv_max_slip", 0.03),
+                                      max_hold_s=getattr(a, "fv_max_hold", 0) or None)
         if not plan:
             continue
         out["fv_signals"] += 1
-        kind = "EXIT" if plan.get("exit") else "ENTRY"
+        kind = f"EXIT_{str(plan['exit']).upper()}" if plan.get("exit") else "ENTRY"
         desc = (f"FV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} "
                 f"@ {plan['limit']} (fair {plan['fair']}" + (f", edge {plan['edge']}" if 'edge' in plan else "") + ")")
         if kill_switch_engaged():
@@ -469,12 +472,12 @@ def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: di
                 mm.enabled = mm.self_test(book, holdings.get(m["id"], 0.0))
             _mm_selftest_done = True
             continue
-        if not mm.eligible(m["id"], other):
-            continue
         fair = feed.mid(m["id"]) if feed is not None else None
         if fair is None and refs is not None:
             f_ = refs.fair(m["id"])
             fair = f_["fair"] if f_ else None
+        if not mm.eligible(m["id"], other, fair):
+            continue
         mv = feed.move(m["id"], 120) if feed is not None else None
         moving = mv is not None and abs(mv) >= 0.01
         with critical():
@@ -577,8 +580,13 @@ def main():
     ap.add_argument("--fv-unit", type=float, default=500,
                     help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
     ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
-    ap.add_argument("--fv-max-gross", type=float, default=float("inf"),
-                    help="fv: cap on fair-value capital (default: the SIG venue exposure in risk_limits.json)")
+    ap.add_argument("--fv-max-gross", type=float, default=30000,
+                    help="fv: cap on fair-value capital (leaves room for ll/mm under the venue cap)")
+    ap.add_argument("--fv-tp", type=float, default=0.03, help="fv: take profit vs entry")
+    ap.add_argument("--fv-stop", type=float, default=0.05,
+                    help="fv: exit if the reference fair moves this far against the entry")
+    ap.add_argument("--fv-max-slip", type=float, default=0.03, help="fv: stop/time exits only within this of fair")
+    ap.add_argument("--fv-max-hold", type=float, default=0, help="fv: time stop in sec (0 = hold to settlement)")
     ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     ap.add_argument("--poly-poll", type=float, default=3.0, help="ll/mm: sec between Polymarket book polls")
     ap.add_argument("--ll-move", type=float, default=0.02, help="ll: Polymarket mid move that triggers")
@@ -597,6 +605,8 @@ def main():
     ap.add_argument("--mm-max-hold", type=float, default=1800, help="mm: after this, exit at fair")
     ap.add_argument("--mm-min-spread", type=float, default=0.02, help="mm: only quote SIG spreads this wide")
     ap.add_argument("--mm-max-markets", type=int, default=8)
+    ap.add_argument("--mm-min-price", type=float, default=0.10, help="mm: only quote fair values at or above")
+    ap.add_argument("--mm-max-price", type=float, default=0.90, help="mm: only quote fair values at or below")
     ap.add_argument("--mm-poll", type=float, default=10, help="mm: sec between open-order/fill syncs")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -645,7 +655,8 @@ def main():
     if "mm" in strategies:
         mm = scalper.MarketMaker(cli, mm_ledger, edge=a.mm_edge, size=a.mm_size, max_inventory=a.mm_max_inventory,
                                  take=a.mm_take, max_hold_s=a.mm_max_hold, min_spread=a.mm_min_spread,
-                                 max_markets=a.mm_max_markets, place=place_tracked)
+                                 max_markets=a.mm_max_markets, place=place_tracked,
+                                 min_price=a.mm_min_price, max_price=a.mm_max_price)
         mm.enabled = False                   # until the live self-test passes
     mm_tested, mm_synced = False, 0.0
     if strategies & {"fv", "mm"}:

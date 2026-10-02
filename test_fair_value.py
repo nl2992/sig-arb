@@ -154,3 +154,24 @@ class BotHookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PuntExitTests(unittest.TestCase):
+    kw = dict(exit_band=0.01, tp=0.03, stop=0.05, max_slip=0.03)
+
+    def test_short_longshot_exits(self):
+        # short YES entered at 0.075 (bought NO at 0.925), fair then 0.036
+        tgt = fv.exit_signal(book(asks=[(0.04, 500)]), 0.02, -300, entry=0.075, **self.kw)
+        self.assertEqual(tgt["exit"], "target")                         # buy back 3.5c cheaper
+        conv = fv.exit_signal(book(asks=[(0.055, 500)]), 0.05, -300, entry=0.075, **self.kw)
+        self.assertEqual(conv["exit"], "converged")
+        stop = fv.exit_signal(book(asks=[(0.14, 500)]), 0.13, -300, entry=0.075, **self.kw)
+        self.assertEqual(stop["exit"], "stop")                          # reference now 0.13 >= 0.075 + 0.05
+        self.assertIsNone(fv.exit_signal(book(asks=[(0.20, 500)]), 0.13, -300, entry=0.075, **self.kw))  # too far from fair
+
+    def test_long_favourite_stop_and_hold(self):
+        stop = fv.exit_signal(book(bids=[(0.85, 500)]), 0.86, 300, entry=0.915, **self.kw)
+        self.assertEqual(stop["exit"], "stop")
+        self.assertIsNone(fv.exit_signal(book(bids=[(0.90, 500)]), 0.93, 300, entry=0.915, **self.kw))    # hold
+        tm = fv.exit_signal(book(bids=[(0.91, 500)]), 0.93, 300, entry=0.915, held_s=7200, max_hold_s=3600, **self.kw)
+        self.assertEqual(tm["exit"], "time")

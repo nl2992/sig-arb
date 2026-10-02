@@ -239,10 +239,13 @@ def classify_open_order(o: dict) -> Optional[tuple]:
 
 def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[float], held_s: float, *,
               edge: float, size: float, max_inventory: float, take: float, max_hold_s: float,
-              min_spread: float) -> Dict[str, tuple]:
-    """Desired resting quotes {'bid'|'ask': (YES price, qty)}."""
+              min_spread: float, min_price: float = 0.0, max_price: float = 1.0) -> Dict[str, tuple]:
+    """Desired resting quotes {'bid'|'ask': (YES price, qty)}. Outside [min_price, max_price]
+    only the exit for existing inventory is quoted (long shots move too far on surprises)."""
     if not book.bids or not book.asks:
         return {}
+    if not (min_price <= fair <= max_price):
+        size = 0                                   # no new risk; exits below still apply
     bb, ba = book.bids[0][0], book.asks[0][0]
     out: Dict[str, tuple] = {}
     if inventory > 0:                                  # long YES: only the exit ask
@@ -250,7 +253,7 @@ def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[flo
         px = max(ceil_tick(target), round(bb + TICK, 4))
         out["ask"] = (px, inventory)
         room = max_inventory - inventory
-        if room >= 10 and ba - bb >= min_spread:
+        if size and room >= 10 and ba - bb >= min_spread:
             bid = min(round(bb + TICK, 4), floor_tick(fair - edge))
             if bid < ba and bid > 0:
                 out["bid"] = (bid, min(size, room))
@@ -260,12 +263,12 @@ def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[flo
         px = min(floor_tick(target), round(ba - TICK, 4))
         out["bid"] = (px, -inventory)
         room = max_inventory + inventory
-        if room >= 10 and ba - bb >= min_spread:
+        if size and room >= 10 and ba - bb >= min_spread:
             ask = max(round(ba - TICK, 4), ceil_tick(fair + edge))
             if ask > bb and ask < 1:
                 out["ask"] = (ask, min(size, room))
         return out
-    if ba - bb < min_spread:
+    if ba - bb < min_spread or not size:
         return {}
     bid = min(round(bb + TICK, 4), floor_tick(fair - edge))
     ask = max(round(ba - TICK, 4), ceil_tick(fair + edge))
@@ -278,11 +281,13 @@ def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[flo
 
 class MarketMaker:
     def __init__(self, cli, ledger, *, edge=0.01, size=300, max_inventory=1000, take=0.01, max_hold_s=1800,
-                 min_spread=0.02, max_markets=8, requote_s=15, live=False, place=None):
+                 min_spread=0.02, max_markets=8, requote_s=15, live=False, place=None,
+                 min_price=0.10, max_price=0.90):
         self.cli, self.ledger, self.live = cli, ledger, live
         self.edge, self.size, self.max_inventory, self.take = edge, size, max_inventory, take
         self.max_hold_s, self.min_spread, self.max_markets, self.requote_s = max_hold_s, min_spread, max_markets, requote_s
         self.place = place                 # place_tracked-compatible callable (writes intents)
+        self.min_price, self.max_price = min_price, max_price
         self.open: Dict[int, List[dict]] = {}          # market -> open orders (from portfolio)
         self.quoted_at: Dict[int, float] = {}
         self.active: set = set()                        # markets with MM quotes or inventory
@@ -332,10 +337,13 @@ class MarketMaker:
     def cancel_all(self) -> int:
         return sum(self.cancel_market(m) for m in list(self.open))
 
-    def eligible(self, m: int, other_positions: float) -> bool:
+    def eligible(self, m: int, other_positions: float, fair: Optional[float] = None) -> bool:
         if not self.enabled or other_positions:
             return False
-        return m in self.active or len(self.active) < self.max_markets
+        if m in self.active:
+            return True                      # keep managing (exits, pulling) what we already quote
+        in_band = fair is not None and self.min_price <= fair <= self.max_price
+        return in_band and len(self.active) < self.max_markets
 
     def on_book(self, book: Book, fair: Optional[float], moving: bool, holding: float) -> dict:
         """Requote one market. Returns a summary of actions."""
@@ -349,7 +357,8 @@ class MarketMaker:
             return {}
         want = mm_quotes(book, fair, inv, self.ledger.avg_yes(m), self.ledger.held_for(m), edge=self.edge,
                          size=self.size, max_inventory=self.max_inventory, take=self.take,
-                         max_hold_s=self.max_hold_s, min_spread=self.min_spread)
+                         max_hold_s=self.max_hold_s, min_spread=self.min_spread,
+                         min_price=self.min_price, max_price=self.max_price)
         have = {}
         for o in self.open.get(m, []):
             c = classify_open_order(o)
