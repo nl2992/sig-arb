@@ -134,12 +134,13 @@ class Client:
         return None if exp is None else float(exp) - dt.datetime.now(dt.timezone.utc).timestamp()
 
     # ---------------------------------------------------------------- http
-    def _get(self, path: str, **params):
+    def _get(self, path: str, _timeout: float | None = None, **params):
         # Reads are idempotent: retry once, since SIG's API sometimes stalls for 10s+.
+        timeout = _timeout or self.timeout
         try:
-            r = self.s.get(BASE + path, params=params, timeout=self.timeout)
+            r = self.s.get(BASE + path, params=params, timeout=timeout)
         except (requests.Timeout, requests.ConnectionError):
-            r = self.s.get(BASE + path, params=params, timeout=self.timeout)
+            r = self.s.get(BASE + path, params=params, timeout=timeout)
         if r.status_code == 429:
             try:
                 retry_after = float(r.headers.get("Retry-After"))
@@ -210,7 +211,8 @@ class Client:
 
     def portfolio(self) -> dict:
         """Holdings (avg price in the held side's terms), cash and daily P&L."""
-        return self._get("/api/portfolio/page-data", tournamentId=self.tournament)
+        # The heaviest SIG endpoint (16s+ under load): give it its own, longer timeout.
+        return self._get("/api/portfolio/page-data", _timeout=max(self.timeout, 45), tournamentId=self.tournament)
 
     def transactions(self, limit: int = 100) -> List[dict]:
         """Recent account events (trades, settlements), newest first."""
@@ -254,8 +256,13 @@ class Client:
             raise PermissionError("no Supabase access_token (set SIG_COOKIE with the sb-*-auth-token cookie)")
         if not self.profile_id:
             raise PermissionError("no profile id (set SIG_PROFILE_ID or a cookie with the Supabase user)")
-        r = self.s.post(BASE + "/api/trading/orders/place", data=json.dumps(body), timeout=self.timeout,
-                        headers={"Authorization": f"Bearer {self.access_token}"})
+        try:
+            r = self.s.post(BASE + "/api/trading/orders/place", data=json.dumps(body), timeout=self.timeout,
+                            headers={"Authorization": f"Bearer {self.access_token}"})
+        except (requests.Timeout, requests.ConnectionError) as e:
+            # The order may have reached SIG: never treat a lost reply as "not placed".
+            return {"_unknown": True, "_status": None, "error": f"{type(e).__name__}: {str(e)[:150]}",
+                    "idempotencyKey": body["idempotencyKey"]}
         try:
             data = r.json()
         except ValueError:

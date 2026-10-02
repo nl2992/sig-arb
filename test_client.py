@@ -190,3 +190,13 @@ class SessionRefreshTests(unittest.TestCase):
         with mock.patch.object(sig_client, "load_env"), mock.patch.dict(os.environ, env, clear=True):
             c = Client(cookie=COOKIE)
         self.assertFalse(c.can_refresh)
+
+
+class TimeoutTests(unittest.TestCase):
+    def test_place_timeout_is_unknown_not_unplaced(self):
+        import requests
+        c = client()
+        with mock.patch.object(sig_client, "PLACE_PAYLOAD_CONFIRMED", True), \
+                mock.patch.object(c.s, "post", side_effect=requests.ReadTimeout("slow")):
+            resp = c.place(1, 1042, "BUY", 0.4, 100, dry_run=False, client_order_id="x")
+        self.assertTrue(resp["_unknown"])

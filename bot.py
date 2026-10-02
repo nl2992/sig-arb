@@ -418,7 +418,9 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
             out["fv_orders"] += 1
             log.info("%s -> %s filled %g", desc, status, fq)
             if live and status == "UNKNOWN":
-                engage_kill_switch(f"UNKNOWN fair-value order on #{m['id']} ({coid}): reconcile before retrying")
+                # In-doubt single-market order: the intent stays UNKNOWN and holdings_check books
+                # or clears it from SIG's holdings at the next check (kill switch if unexplained).
+                log.warning("fv order on #%s has an unknown outcome; holdings check will reconcile", m["id"])
     return out
 
 
@@ -484,7 +486,7 @@ def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=N
             out["ll_orders"] += 1
             log.info("%s -> %s filled %g", desc, status, fq)
             if live and status == "UNKNOWN":
-                engage_kill_switch(f"UNKNOWN lead-lag order on #{m['id']} ({coid}): reconcile before retrying")
+                log.warning("ll order on #%s has an unknown outcome; holdings check will reconcile", m["id"])
     return out
 
 
@@ -654,7 +656,7 @@ def main():
     ap.add_argument("--mm-max-markets", type=int, default=8)
     ap.add_argument("--mm-min-price", type=float, default=0.10, help="mm: only quote fair values at or above")
     ap.add_argument("--mm-max-price", type=float, default=0.90, help="mm: only quote fair values at or below")
-    ap.add_argument("--mm-poll", type=float, default=10, help="mm: sec between open-order/fill syncs")
+    ap.add_argument("--mm-poll", type=float, default=20, help="mm: sec between open-order/fill syncs")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     signal.signal(signal.SIGINT, _on_stop_signal)
@@ -686,21 +688,23 @@ def main():
     checker = holdings_check.HoldingsCheck(ledgers, lambda why: engage_kill_switch(why, actor="holdings_check"),
                                            intent_log=INTENT_LOG, exec_log=EXEC_LOG)
     acct = {}                                # market_id -> signed YES holding (minute snapshot)
-    if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
+    for attempt in range(1, 6):              # never trade before the sweep and the check succeed
         try:
-            n = cancel_all_open_orders(cli)
-            if n:
-                log.warning("startup: cancelled %d resting order(s) left by a previous run", n)
-                time.sleep(2)
+            if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
+                n = cancel_all_open_orders(cli)
+                if n:
+                    log.warning("startup: cancelled %d resting order(s) left by a previous run", n)
+                    time.sleep(2)
+            port = cli.portfolio()
+            acct = holdings_check.actual_holdings(port)
+            rep = checker.check(port, cli.transactions, immediate=True)
+            log.info("holdings check at start: %s", json.dumps(rep))
+            break
         except Exception as e:
-            log.error("startup: could not sweep resting orders: %s", e)
-    try:
-        port = cli.portfolio()
-        acct = holdings_check.actual_holdings(port)
-        rep = checker.check(port, cli.transactions, immediate=True)
-        log.info("holdings check at start: %s", json.dumps(rep))
-    except Exception as e:
-        log.error("holdings check at start failed: %s", e)
+            log.error("startup sweep/check attempt %d failed: %s", attempt, e)
+            time.sleep(10 * attempt)
+    else:
+        engage_kill_switch("startup could not sweep resting orders and reconcile holdings (SIG unreachable)")
     feed = mm = None
     if strategies & {"ll", "mm"}:
         feed = scalper.PolyFeed(poll_s=a.poly_poll)
