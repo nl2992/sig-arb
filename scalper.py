@@ -406,8 +406,7 @@ class MarketMaker:
         self._stop = threading.Event()
         self._others, self._kill, self._on_fill, self._poll_s = others_expected, kill_switch, on_fill, poll_s
         self._last_sync = 0.0
-        self.tested = False
-        self.active_snapshot: frozenset = frozenset()
+        self.active_snapshot: frozenset = frozenset(self.active)
         self.stats = {"open_quotes": 0, "errors": 0, "requests": 0}
         self._thread = threading.Thread(target=self._run, name="market-maker", daemon=True)
         self._thread.start()
@@ -450,6 +449,12 @@ class MarketMaker:
                             self._after_change()
                         log.warning("mm: pulled %d quote(s) (kill switch / not live)", n)
                     continue
+                if self.tested and not self.enabled:
+                    if any(self.open.values()):          # disabled: never leave quotes resting
+                        with self.lock:
+                            self.cancel_all()
+                            self._after_change()
+                    continue
                 for m, (book, fair, moving, holding, test_ok, at) in pending.items():
                     if self._stop.is_set() or self._kill():
                         break
@@ -457,9 +462,14 @@ class MarketMaker:
                         continue
                     with self.lock:
                         if not self.tested:
-                            if test_ok:
-                                self.enabled = self.self_test(book, holding)
-                                self.tested = True
+                            if test_ok and time.time() >= getattr(self, "_retest_at", 0):
+                                result = self.self_test(book, holding)
+                                if result is None:       # SIG errored: not a verdict, retry later
+                                    self._retest_at = time.time() + 120
+                                else:
+                                    self.enabled, self.tested = result, True
+                            continue
+                        if not self.enabled:
                             continue
                         act = self.on_book(book, fair, moving, holding)
                         self._after_change()
@@ -476,8 +486,9 @@ class MarketMaker:
             self._wake.set()
             self._thread.join(timeout)
 
-    def self_test(self, book: Book, holding: float) -> bool:
-        """Place a resting order that cannot fill, find it, cancel it, confirm it is gone."""
+    def self_test(self, book: Book, holding: float) -> Optional[bool]:
+        """Place a resting order that cannot fill, find it, cancel it, confirm it is gone.
+        True = passed, False = cancels do not work (disable MM), None = SIG errored (retry)."""
         if not self.live:
             return True
         coid = f"mm:selftest:{int(time.time())}"
@@ -501,5 +512,12 @@ class MarketMaker:
             log.info("mm self-test passed (resting order placed and cancelled on #%s)", book.market_id)
             return True
         except Exception as e:
-            log.error("mm self-test failed: %s; market making disabled", e)
-            return False
+            log.warning("mm self-test could not complete (%s); will retry", e)
+            try:                                       # do not leave the probe order behind
+                for o in self.cli.portfolio().get("openOrders", []):
+                    if int(o.get("marketId", -1)) == book.market_id and classify_open_order(o) \
+                            and abs(classify_open_order(o)[1] - 0.01) < 1e-6:
+                        self.cli.cancel(o["id"], dry_run=False)
+            except Exception:
+                pass
+            return None

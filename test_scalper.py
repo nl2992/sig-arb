@@ -255,3 +255,28 @@ class WorkerTests(Tmp):
         self.assertTrue(self.wait(lambda: cli.cancel.called))
         mm.stop_worker(5)
         cli.cancel.assert_any_call("q", dry_run=False)
+
+
+class WorkerSafetyTests(WorkerTests):
+    def test_transient_self_test_error_retries_and_disabled_never_quotes(self):
+        mm, cli, placed = self.make()
+        cli.portfolio.side_effect = None
+        cli.portfolio.return_value = {"openOrders": [], "holdings": []}
+        place_calls = []
+
+        def boom(*a, **k):
+            place_calls.append(a)
+            raise RuntimeError("503")
+        mm.place = boom
+        with mock.patch.object(scalper.time, "sleep"):
+            self.assertIsNone(mm.self_test(book(1, bids=[(0.4, 1)]), 0.0))   # error -> retry, not a verdict
+        mm.tested, mm.enabled = True, False
+        cli.portfolio.return_value = {"holdings": [], "openOrders": [
+            {"id": "z", "marketId": 1, "side": "yes", "action": "buy", "priceLimit": 0.4, "quantity": 300}]}
+        mm.start_worker(lambda: {}, lambda: False, poll_s=999)
+        mm.live = True
+        mm.submit(book(1, bids=[(0.40, 100)], asks=[(0.46, 100)]), 0.43, False, 0.0, True)
+        self.assertTrue(self.wait(lambda: cli.cancel.called))
+        mm.stop_worker(5)
+        cli.cancel.assert_any_call("z", dry_run=False)                     # disabled: quotes pulled
+        self.assertEqual(len(place_calls), 1)                              # and nothing new placed
