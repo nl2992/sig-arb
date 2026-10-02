@@ -95,14 +95,29 @@ def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], 
                           "hedged": worst >= -0.01 * r["cost"]})
     race_rows.sort(key=lambda x: x["worst"])
 
-    # arb value is locked: the worst case of the arb legs alone in each race (complete sets),
-    # not a fair-price estimate
+    # Settlement value per strategy on its OWN (gross) positions: payoffs are linear, so
+    # gross attribution is exact even where SIG nets one strategy's YES against another's NO.
+    # Arbs count their locked complete-set value; the others their value at fair.
+    for k in strat:
+        strat[k]["ev"] = 0.0
     arb_by_race = collections.defaultdict(list)
-    for row in rows:
-        if row["strategy"] == "arb":
-            q = row["qty"] if row["side"] == "YES" else -row["qty"]
-            arb_by_race[row["race"]].append((row["party"], q, row["cost"]))
-    if "arb" in strat:
+    for m, h in hold.items():
+        q_net, avg = float(h["quantity"]), float(h.get("averagePricePaid") or 0)
+        mt = TITLE_RE.match(h.get("title", ""))
+        party, race = (mt.group(1), mt.group(2)) if mt else ("?", h.get("title", ""))
+        fair = fair_fn(m)
+        price = fair if fair is not None else h.get("currentPrice")
+        rest = q_net
+        for name, led in ledgers.items():
+            q = led.position(m)
+            if not q:
+                continue
+            rest -= q
+            if price is not None:
+                strat[name]["ev"] += abs(q) * _side_value(q, price) - led.capital(m)
+        if abs(rest) > 0.5:
+            arb_by_race[race].append((party, rest, abs(rest) * avg))
+    if arb_by_race:
         strat["arb"]["ev"] = sum(min(race_pnl({"positions": legs}, w)
                                      for w in ("Democratic", "Republican", "Independent", "other"))
                                  for legs in arb_by_race.values())
