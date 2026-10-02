@@ -75,7 +75,8 @@ def check(offline: bool = False, limits_path: pathlib.Path = bot.RISK_LIMITS,
         rows.append(_row("sig_read_access", "SKIP", "no cookie"))
     else:
         try:
-            markets = cli.markets()
+            import fast_scan
+            markets = fast_scan.load_markets(cli)        # cached list: one slow page fetch is not a failure
             raw = cli.book_raw(markets[0]["id"]) if markets else {}
             shape = "books" if "books" in raw else "levels" if "levels" in raw else "unknown"
             balance = cli.balance()
