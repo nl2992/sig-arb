@@ -7,12 +7,6 @@
 <p id="opsReasons" class="ops-reasons" hidden></p>
 <details class="ops-gates"><summary>Live execution gates <span id="opsGateSummary"></span></summary><div id="opsGates" class="gate-grid"></div><div id="opsFeeds" class="gate-grid"></div></details>
 </section>
-<section id="execution" class="ops exec" aria-label="Automated execution" aria-live="polite">
-<div class="section-title"><h2>Automated execution</h2><span>bot.py sends orders; this panel shows its state and holds the kill switch</span></div>
-<div class="ops-strip"><div><span>Bot</span><b id="botState" class="badge warn">—</b></div><div><span>Orders</span><b id="botLive" class="badge warn">—</b></div><div><span>Gross used / cap</span><b id="botGross">—</b></div><div><span>Per-race cap · min edge</span><b id="botCaps">—</b></div><div><span>Signals / executed / skipped</span><b id="botCounts">—</b></div><div><span>Kill switch</span><b id="execKill" class="badge warn">—</b> <button type="button" id="killEngage" class="danger">Engage kill switch</button> <button type="button" id="killRelease">Release…</button></div></div>
-<p id="botBlockers" class="ops-reasons" hidden></p>
-<details class="ops-gates" open><summary>Execution tape <span id="execCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Time</th><th>Race</th><th>Dir</th><th>Mode</th><th>Status</th><th>Qty</th><th>PnL</th><th>Legs</th></tr></thead><tbody id="execRows"><tr><td colspan="8" class="empty">No executions journaled yet.</td></tr></tbody></table></div></details>
-</section>
 <section id="positions" class="ops exec" aria-label="Positions and P&amp;L">
 <div class="section-title"><h2>Positions &amp; P&amp;L</h2><span id="posAsOf">Awaiting the bot's first positions report</span></div>
 <div class="ops-strip" id="posTiles"></div>
@@ -22,6 +16,12 @@
 </div>
 <details class="ops-gates" open><summary>Races by worst case <span id="posRaceCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Race</th><th>Cost</th><th>If D wins</th><th>If R wins</th><th>Worst case</th><th></th></tr></thead><tbody id="posRaces"></tbody></table></div></details>
 <details class="ops-gates"><summary>All positions <span id="posCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Strategy</th><th>Race</th><th>Party</th><th>Side</th><th>Qty</th><th>Avg</th><th>SIG mark</th><th>Fair</th><th>Cost</th><th>Mark P&amp;L</th><th>Settlement EV</th></tr></thead><tbody id="posRows"></tbody></table></div></details>
+</section>
+<section id="execution" class="ops exec" aria-label="Automated execution" aria-live="polite">
+<div class="section-title"><h2>Automated execution</h2><span>bot.py sends orders; this panel shows its state and holds the kill switch</span></div>
+<div class="ops-strip"><div><span>Bot</span><b id="botState" class="badge warn">—</b></div><div><span>Orders</span><b id="botLive" class="badge warn">—</b></div><div><span>Gross used / cap</span><b id="botGross">—</b></div><div><span>Per-race cap · min edge</span><b id="botCaps">—</b></div><div><span>Signals / executed / skipped</span><b id="botCounts">—</b></div><div><span>Kill switch</span><b id="execKill" class="badge warn">—</b> <button type="button" id="killEngage" class="danger">Engage kill switch</button> <button type="button" id="killRelease">Release…</button></div></div>
+<p id="botBlockers" class="ops-reasons" hidden></p>
+<details class="ops-gates"><summary>Execution tape <span id="execCount"></span></summary><div class="table-wrap"><table><thead><tr><th>Time</th><th>Race</th><th>Dir</th><th>Mode</th><th>Status</th><th>Qty</th><th>PnL</th><th>Legs</th></tr></thead><tbody id="execRows"><tr><td colspan="8" class="empty">No executions journaled yet.</td></tr></tbody></table></div></details>
 </section>
 <main><div class="heading"><div><p class="eyebrow">MARKET MONITOR</p><h1>Order-book opportunities</h1></div><div class="stamp"><span id="time">Awaiting first snapshot</span><label><input type="checkbox" id="auto" checked> Auto-refresh</label></div></div>
 <div id="error" role="alert" hidden></div>
