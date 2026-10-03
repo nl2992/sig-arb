@@ -144,17 +144,24 @@ def entry_signal(book: Book, fair: float, threshold: float, capital_left: float,
     return None
 
 
+def slip_ok(price: float, fair: float, *, selling: bool, max_slip: float) -> bool:
+    """One-sided slippage guard for exits: refuse only prices more than `max_slip` worse
+    than fair. A SIG price that lags on our side of fair is the best exit there is."""
+    return price >= fair - max_slip if selling else price <= fair + max_slip
+
+
 def exit_signal(book: Book, fair: float, position: float, exit_band: float, entry: Optional[float] = None,
                 tp: Optional[float] = None, stop: Optional[float] = None, max_slip: float = 0.03,
                 held_s: float = 0.0, max_hold_s: Optional[float] = None) -> Optional[dict]:
     """Close a fair-value position (signed YES qty). Reasons, first match wins:
     target    SIG pays >= `tp` better than the entry
     stop      the reference fair moved >= `stop` against the entry (thesis broken); only
-              executed at a SIG price within `max_slip` of fair, never into an empty book
+              executed at a SIG price no more than `max_slip` worse than fair, never into
+              an empty book (a price at or better than fair is always taken)
     converged SIG is back within `exit_band` of fair (the mispricing is gone)
     time      held longer than `max_hold_s` (off when None), same slippage guard."""
     def guarded(price):
-        return abs(price - fair) <= max_slip
+        return slip_ok(price, fair, selling=position > 0, max_slip=max_slip)
     if position > 0 and book.bids:
         price, size = book.bids[0]
         why = ("target" if entry is not None and tp and price >= entry + tp

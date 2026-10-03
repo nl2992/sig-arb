@@ -323,7 +323,9 @@ class Risk:
         if getattr(self.a, "max_per_race", None) and r.capital > self.a.max_per_race + 1e-9:
             return False, "per-race cap"
         if self.gross + r.capital > self.a.max_gross:
-            return False, "gross cap"
+            high_ev = r.capital > 0 and r.pnl / r.capital >= getattr(self.a, "reserve_min_roi", float("inf"))
+            if not high_ev or self.gross + r.capital > self.a.max_gross + getattr(self.a, "reserve", 0.0):
+                return False, "gross cap"
         if time.time() - self.last_fire.get(r.race, 0) < self.a.cooldown:
             return False, "cooldown"
         return True, ""
@@ -332,6 +334,33 @@ class Risk:
         self.last_fire[r.race] = time.time()
         if res.get("status") in ("DONE", "LEGGED", "IMBALANCED", "UNKNOWN"):
             self.gross += r.capital
+
+
+def roi(plan: dict) -> float:
+    """Expected return on capital of an entry plan (0 when unknown)."""
+    cap = plan.get("capital") or 0.0
+    return plan.get("expected_pnl", 0.0) / cap if cap > 0 else 0.0
+
+
+def account_room(a, risk, high_ev: bool = False) -> float:
+    """Capital left under the account cap (venue_exposure.sig). Above it sits the high-EV
+    reserve (risk_limits.json high_ev_reserve), open only to entries expected to return at
+    least reserve_min_roi on their capital."""
+    if risk is None:
+        return float("inf")
+    return a.max_gross + (getattr(a, "reserve", 0.0) if high_ev else 0.0) - risk.gross
+
+
+def reserve_plan(plan: Optional[dict], replan, a, base_left: float, high_left: float) -> Optional[dict]:
+    """Where the normal caps leave less room than the high-EV reserve, re-plan the entry with
+    the reserve's room (strategy caps do not apply to it; per-market and per-race caps do) and
+    keep it only if it is larger and expected to return >= reserve_min_roi."""
+    if (plan and plan.get("exit")) or not getattr(a, "reserve", 0.0) or high_left <= max(base_left, 0.0):
+        return plan
+    hi = replan(high_left)
+    if hi and not hi.get("exit") and roi(hi) >= a.reserve_min_roi and hi["qty"] > (plan["qty"] if plan else 0):
+        return {**hi, "reserve": True}
+    return plan
 
 
 def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
@@ -354,15 +383,19 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
             continue
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
         race_used = sum(ledger.capital(x["id"]) for x in snap.markets)
-        gross_left = min(a.fv_max_gross - ledger.gross(),
-                         getattr(a, "fv_max_race", float("inf")) - race_used,
-                         (a.max_gross - risk.gross) if risk is not None else float("inf"))
-        plan = fair_value.plan_market(book, refs.fair(m["id"]), ledger, threshold=a.fv_threshold,
-                                      exit_band=a.fv_exit, max_per_market=a.fv_max_market,
-                                      gross_left=gross_left, unit=getattr(a, "fv_unit", None),
-                                      tp=getattr(a, "fv_tp", None), stop=getattr(a, "fv_stop", None),
-                                      max_slip=getattr(a, "fv_max_slip", 0.03),
-                                      max_hold_s=getattr(a, "fv_max_hold", 0) or None)
+        race_left = getattr(a, "fv_max_race", float("inf")) - race_used
+        gross_left = min(a.fv_max_gross - ledger.gross(), race_left, account_room(a, risk))
+        fair = refs.fair(m["id"])
+
+        def replan(room):
+            return fair_value.plan_market(book, fair, ledger, threshold=a.fv_threshold,
+                                          exit_band=a.fv_exit, max_per_market=a.fv_max_market,
+                                          gross_left=room, unit=getattr(a, "fv_unit", None),
+                                          tp=getattr(a, "fv_tp", None), stop=getattr(a, "fv_stop", None),
+                                          max_slip=getattr(a, "fv_max_slip", 0.03),
+                                          max_hold_s=getattr(a, "fv_max_hold", 0) or None)
+        plan = reserve_plan(replan(gross_left), replan, a, gross_left,
+                            min(race_left, account_room(a, risk, high_ev=True)))
         if not plan:
             continue
         if not plan.get("exit") and m["id"] in skip_entries:
@@ -370,7 +403,8 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
         out["fv_signals"] += 1
         kind = f"EXIT_{str(plan['exit']).upper()}" if plan.get("exit") else "ENTRY"
         desc = (f"FV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} "
-                f"@ {plan['limit']} (fair {plan['fair']}" + (f", edge {plan['edge']}" if 'edge' in plan else "") + ")")
+                f"@ {plan['limit']} (fair {plan['fair']}" + (f", edge {plan['edge']}" if 'edge' in plan else "") + ")"
+                + (f" [high-EV reserve, {roi(plan):.1%} expected]" if plan.get("reserve") else ""))
         if kill_switch_engaged():
             log.info("kill switch engaged; not sending %s", desc)
             out["fv_skipped"] += 1
@@ -448,16 +482,20 @@ def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, 
         if m["id"] not in targets:
             continue
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
-        gross_left = min(a.cv_max_gross - ledger.gross(),
-                         (a.max_gross - risk.gross) if risk is not None else float("inf"))
-        plan = conviction.plan(book, fair_of(m["id"]), ledger, min_edge=a.cv_min_edge, max_bet=a.cv_max_bet,
-                               gross_left=gross_left, stop=a.cv_stop, max_slip=getattr(a, "fv_max_slip", 0.03))
+        gross_left = min(a.cv_max_gross - ledger.gross(), account_room(a, risk))
+        fair = fair_of(m["id"])
+
+        def replan(room):
+            return conviction.plan(book, fair, ledger, min_edge=a.cv_min_edge, max_bet=a.cv_max_bet,
+                                   gross_left=room, stop=a.cv_stop, max_slip=getattr(a, "fv_max_slip", 0.03))
+        plan = reserve_plan(replan(gross_left), replan, a, gross_left, account_room(a, risk, high_ev=True))
         if not plan:
             continue
         out["cv_signals"] += 1
         kind = "EXIT_STOP" if plan.get("exit") else "ENTRY"
         desc = (f"CV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} @ {plan['limit']}"
-                f" (fair {plan['fair']}" + (f", edge {plan['edge']}, capital {plan['capital']})" if "edge" in plan else ")"))
+                f" (fair {plan['fair']}" + (f", edge {plan['edge']}, capital {plan['capital']})" if "edge" in plan else ")")
+                + (f" [high-EV reserve, {roi(plan):.1%} expected]" if plan.get("reserve") else ""))
         if kill_switch_engaged() or a.mode != "auto":
             log.info("not sending %s (%s)", desc, "kill switch" if kill_switch_engaged() else a.mode)
             continue
@@ -595,6 +633,9 @@ def apply_limits(a, limits: dict):
     a.max_gross = min(a.max_gross, limits["venue_exposure"].get("sig", a.max_gross))
     a.max_per_race = min(a.max_per_race, limits["per_trade_capital"], limits["event_exposure"])
     a.min_edge = max(a.min_edge, limits["min_net_edge"])
+    res = limits.get("high_ev_reserve") or {}
+    a.reserve = float(res.get("capital", 0.0))
+    a.reserve_min_roi = float(res.get("min_roi", float("inf")))
     return a
 
 
@@ -738,8 +779,8 @@ def main():
     seen = set()
     counts = {"signals": 0, "executed": 0, "skipped": 0}
     last_exec = None
-    log.info("mode=%s live=%s markets=%d max_gross=%g max_per_race=%g min_edge=%g",
-             a.mode, a.live, len(markets), a.max_gross, a.max_per_race, a.min_edge)
+    log.info("mode=%s live=%s markets=%d max_gross=%g (+%g high-EV reserve at >= %g return) max_per_race=%g min_edge=%g",
+             a.mode, a.live, len(markets), a.max_gross, a.reserve, a.reserve_min_roi, a.max_per_race, a.min_edge)
 
     strategies = {x.strip() for x in a.strategy.split(",") if x.strip()}
     if not strategies <= {"arb", "cv", "fv", "ll", "mm"}:
@@ -987,6 +1028,8 @@ def main():
                          live_blockers=blockers, kill_switch=kill_switch_engaged(),
                          payload_confirmed=sig_client.PLACE_PAYLOAD_CONFIRMED,
                          interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
+                         reserve=({"capital": a.reserve, "min_roi": a.reserve_min_roi,
+                                   "used": round(max(0.0, risk.gross - a.max_gross), 2)} if a.reserve else None),
                          max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
                          last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left(),
                          scan=scan, strategies=sorted(strategies), holdings_check=checker.last,

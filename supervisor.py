@@ -237,6 +237,10 @@ def status() -> int:
               f"{' (' + '; '.join(st.get('live_blockers') or []) + ')' if not st.get('live') else ''}")
         print(f"token        {'unknown' if left is None else f'{left / 60:.0f} min left'}")
         print(f"exposure     {st.get('gross')} / {st.get('max_gross')}  | strategies {st.get('strategies')}")
+        if st.get("reserve"):
+            r = st["reserve"]
+            print(f"reserve      {r['used']:,.0f} / {r['capital']:,.0f} above the cap, for entries expected to "
+                  f"return >= {r['min_roi']:.0%}")
         print(f"counts       {st.get('counts')}")
         if st.get("fv"):
             print(f"fair value   {st['fv']}")

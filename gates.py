@@ -49,6 +49,11 @@ def load_limits(path: str | pathlib.Path) -> dict:
             raise ValueError(f"risk limit {key} must be nonnegative")
     if data["auto_hedge"]:
         raise ValueError("auto_hedge must stay false")
+    res = data.get("high_ev_reserve")             # optional: capital above venue_exposure.sig
+    if res is not None and not (isinstance(res, dict) and all(
+            isinstance(res.get(k), (int, float)) and not isinstance(res.get(k), bool) and res[k] >= 0
+            for k in ("capital", "min_roi"))):
+        raise ValueError("risk limit high_ev_reserve must have nonnegative capital and min_roi")
     return data
 
 

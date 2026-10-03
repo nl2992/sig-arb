@@ -12,7 +12,7 @@ Picker   ranks every market the bot has a recent book for by the gap between SIG
 Entry    when a target's race is read, walk SIG's book up to `max_bet` capital at prices
          still `min_edge` better than fair.
 Exit     hold to settlement; exit only if the consensus moves `stop` against the entry
-         (thesis broken), executed only within `max_slip` of fair.
+         (thesis broken), at a SIG price no more than `max_slip` worse than fair.
 Ledger   logs/cv_positions.json.
 """
 from __future__ import annotations
@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Callable, Dict, Optional
 
 from arb_engine import Book, TITLE_RE
+from fair_value import slip_ok
 
 
 def gap(book: Book, fair: float) -> Optional[tuple]:
@@ -75,10 +76,14 @@ def plan(book: Book, fair: Optional[float], ledger, *, min_edge: float, max_bet:
     pos = ledger.position(m)
     if pos:
         entry = ledger.avg_yes(m)
-        if pos > 0 and book.bids and fair <= entry - stop and abs(book.bids[0][0] - fair) <= max_slip:
+        # Stop only when the thesis is broken, at a price no more than max_slip worse than fair.
+        # SIG lagging on our side of fair is the best exit, so that is never refused.
+        if pos > 0 and book.bids and fair <= entry - stop and slip_ok(book.bids[0][0], fair, selling=True,
+                                                                         max_slip=max_slip):
             return {"yes_side": "SELL", "limit": book.bids[0][0], "qty": float(min(pos, book.bids[0][1])),
                     "exit": "stop", "fair": round(fair, 4), "entry": round(entry, 4)}
-        if pos < 0 and book.asks and fair >= entry + stop and abs(book.asks[0][0] - fair) <= max_slip:
+        if pos < 0 and book.asks and fair >= entry + stop and slip_ok(book.asks[0][0], fair, selling=False,
+                                                                          max_slip=max_slip):
             return {"yes_side": "BUY", "limit": book.asks[0][0], "qty": float(min(-pos, book.asks[0][1])),
                     "exit": "stop", "fair": round(fair, 4), "entry": round(entry, 4)}
     budget = min(max_bet - ledger.capital(m), gross_left)
