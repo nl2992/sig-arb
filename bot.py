@@ -42,6 +42,7 @@ import fast_scan
 import gates
 import holdings_check
 import positions
+import resting_exits
 import scalper
 import sig_client
 from sig_client import Client
@@ -140,12 +141,14 @@ def critical():
 
 
 def place_tracked(cli: Client, strategy: str, market_id: int, exchange_id: int, yes_side: str,
-                  limit: float, qty: float, live: bool, client_order_id: str, holdings: float = None) -> dict:
+                  limit: float, qty: float, live: bool, client_order_id: str, holdings: float = None,
+                  resting: bool = False) -> dict:
     """cli.place with a write-ahead intent: SENT is on disk before the order leaves, the
     result after it returns. A process killed in between leaves an in-doubt intent that
     holdings_check recovers from SIG's holdings on the next start."""
     if live:
-        holdings_check.write_intent(client_order_id, strategy, market_id, yes_side, limit, qty, INTENT_LOG)
+        holdings_check.write_intent(client_order_id, strategy, market_id, yes_side, limit, qty, INTENT_LOG,
+                                    resting=resting)
     kw = {} if holdings is None else {"holdings": holdings}
     try:
         resp = cli.place(market_id, exchange_id, yes_side, limit, qty, dry_run=not live,
@@ -373,7 +376,7 @@ def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
 
 def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, risk=None,
                    holdings: dict = None, skip: set = frozenset(), touched: set = None,
-                   skip_entries: set = frozenset()) -> dict:
+                   skip_entries: set = frozenset(), exits_claim=None) -> dict:
     """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like).
     Room is the tightest of: account-wide exposure cap, fair-value cap, per-race cap
     (sibling markets are one bet), per-market cap; size scales with the gap."""
@@ -400,6 +403,8 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
             continue
         if not plan.get("exit") and m["id"] in skip_entries:
             continue                           # another strategy works this market; exits still run
+        if plan.get("exit") and exits_claim is not None and not exits_claim(m["id"]):
+            continue                           # a resting exit works it (stops wait for the next snapshot)
         out["fv_signals"] += 1
         kind = f"EXIT_{str(plan['exit']).upper()}" if plan.get("exit") else "ENTRY"
         desc = (f"FV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} "
@@ -475,7 +480,7 @@ def journal_single(strategy: str, market_id: int, yes_side: str, qty: float, pri
 
 
 def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, a, live: bool, risk=None,
-                   holdings: dict = None, touched: set = None) -> dict:
+                   holdings: dict = None, touched: set = None, exits_claim=None) -> dict:
     """Enter / stop out conviction bets for the targets in one freshly read race."""
     out = {"cv_signals": 0, "cv_orders": 0}
     for m in snap.markets:
@@ -487,12 +492,15 @@ def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, 
 
         def replan(room):
             return conviction.plan(book, fair, ledger, min_edge=a.cv_min_edge, max_bet=a.cv_max_bet,
-                                   gross_left=room, stop=a.cv_stop, max_slip=getattr(a, "fv_max_slip", 0.03))
+                                   gross_left=room, stop=a.cv_stop, max_slip=getattr(a, "fv_max_slip", 0.03),
+                                   exit_band=getattr(a, "cv_exit", None))
         plan = reserve_plan(replan(gross_left), replan, a, gross_left, account_room(a, risk, high_ev=True))
         if not plan:
             continue
+        if plan.get("exit") and exits_claim is not None and not exits_claim(m["id"]):
+            continue                           # a resting exit works it (stops wait for the next snapshot)
         out["cv_signals"] += 1
-        kind = "EXIT_STOP" if plan.get("exit") else "ENTRY"
+        kind = f"EXIT_{plan['exit'].upper()}" if plan.get("exit") else "ENTRY"
         desc = (f"CV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} @ {plan['limit']}"
                 f" (fair {plan['fair']}" + (f", edge {plan['edge']}, capital {plan['capital']})" if "edge" in plan else ")")
                 + (f" [high-EV reserve, {roi(plan):.1%} expected]" if plan.get("reserve") else ""))
@@ -587,10 +595,10 @@ def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=N
 
 
 def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: dict, a,
-                     skip: set = frozenset()) -> None:
+                     skip: set = frozenset(), exits_markets: frozenset = frozenset()) -> None:
     """Queue requotes for one freshly read race; the MM worker thread sends the orders."""
     for m in snap.markets:
-        if m["id"] in skip:
+        if m["id"] in skip or (m["id"] in exits_markets and m["id"] not in mm.active_snapshot):
             continue
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
         # MM keeps its own inventory books, so it may quote markets fair value holds; it stays
@@ -759,6 +767,11 @@ def main():
     ap.add_argument("--cv-max-fair", type=float, default=0.85, help="cv: only races with fair at or below")
     ap.add_argument("--cv-stop", type=float, default=0.10, help="cv: exit if the consensus moves this far against")
     ap.add_argument("--cv-refresh", type=float, default=120, help="cv: sec between target re-ranking")
+    ap.add_argument("--cv-exit", type=float, default=0.005,
+                    help="cv: take profit once SIG is within this of fair (never below the entry)")
+    ap.add_argument("--no-resting-exits", dest="resting_exits", action="store_false",
+                    help="do not rest take-profit orders for fv/cv positions")
+    ap.add_argument("--exit-requote", type=float, default=60, help="resting exits: min sec between requotes")
     ap.add_argument("--mm-min-price", type=float, default=0.10, help="mm: only quote fair values at or above")
     ap.add_argument("--mm-max-price", type=float, default=0.90, help="mm: only quote fair values at or below")
     ap.add_argument("--mm-poll", type=float, default=20, help="mm: sec between open-order/fill syncs")
@@ -851,6 +864,17 @@ def main():
     if mm is not None:
         mm.start_worker(lambda: others_expected("mm"), kill_switch_engaged, on_fill=mm_fill, poll_s=a.mm_poll)
 
+    # Standing take-profit orders for fair-value and conviction positions (own worker thread).
+    exits = None
+    if getattr(a, "resting_exits", False) and strategies & {"fv", "cv"} and refs is not None:
+        rules = {"fv": {"tp": a.fv_tp, "band": a.fv_exit, "stop": a.fv_stop},
+                 "cv": {"band": a.cv_exit, "stop": a.cv_stop, "floor_at_entry": True}}
+        exits = resting_exits.RestingExits(cli, {k: ledgers[k] for k in ("fv", "cv") if k in strategies},
+                                           place_tracked, rules=rules, requote_s=a.exit_requote, intent_log=INTENT_LOG)
+        exits.start_worker(kill_switch_engaged)
+        if mm is not None:
+            mm.skip_sync = lambda: exits.claimed
+
     def fair_of(m_):
         f_ = feed.mid(m_) if feed is not None else None
         if f_ is None and refs is not None:
@@ -893,9 +917,17 @@ def main():
                     # (arb and fair value, including ones from earlier runs), fair-value orders
                     # read holdings from it, and holdings are reconciled against bot records.
                     try:
+                        fetched_at = time.time()
                         port = cli.portfolio()
                         risk.gross = holdings_check.deployed(port)
                         acct = holdings_check.actual_holdings(port)
+                        if exits is not None:          # book resting-exit fills before MM and reconciliation
+                            for f_ in exits.sync(port, lambda: holdings_check.expected_holdings(checker.rows(), EXEC_LOG),
+                                                 fetched_at):
+                                log.info("EXIT FILL #%s %s %s %g @ %s (resting)", f_["market_id"], f_["strategy"],
+                                         f_["yes_side"], f_["qty"], f_["price"])
+                                journal_single(f_["strategy"], f_["market_id"], f_["yes_side"], f_["qty"], f_["price"],
+                                               "EXIT_RESTING", live)
                         if mm is not None:
                             with mm.lock:              # fills and reconciliation see one snapshot
                                 mm.sync_with(port)
@@ -915,6 +947,9 @@ def main():
                 scan = {}
                 if mm is not None:
                     mm.live = worker_live["live"] = live     # the worker pulls quotes when not live
+                if exits is not None:
+                    exits.live = live                        # the worker pulls its orders when not live
+                exits_claim = exits.claim_taker if exits is not None else None
                 if feed is not None:
                     hot_mkts = set(feed.movers(min(a.ll_move, 0.01), a.ll_lookback))
                     hot_mkts |= {int(k) for k, r in ll_ledger.rows.items() if r.get("qty")}
@@ -996,23 +1031,40 @@ def main():
                         continue
                     touched = set()
                     mm_busy = set(mm.active_snapshot) if mm is not None else set()
+                    exits_mkts = exits.markets_snapshot if exits is not None else frozenset()
                     if "cv" in strategies:
                         for k, v in run_conviction(cli, snap, cv_targets, fair_of, cv_ledger, a, live, risk, acct,
-                                                   touched).items():
+                                                   touched, exits_claim=exits_claim).items():
                             counts[k] = counts.get(k, 0) + v
                     if "ll" in strategies:
                         for k, v in run_leadlag(cli, snap, feed, ll_ledger, a, live, risk, acct,
-                                                skip=mm_busy | {int(k) for k, r in ledger.rows.items() if r.get("qty")},
+                                                skip=mm_busy | exits_mkts | {int(k) for k, r in ledger.rows.items() if r.get("qty")},
                                                 touched=touched).items():
                             counts[k] = counts.get(k, 0) + v
                     if "fv" in strategies:
                         fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk, acct,
                                                    skip=touched, touched=touched,
-                                                   skip_entries=mm_busy | set(cv_targets))
+                                                   skip_entries=mm_busy | set(cv_targets), exits_claim=exits_claim)
                         for k, v in fv_counts.items():
                             counts[k] = counts.get(k, 0) + v
                     if mm is not None and live and not kill_switch_engaged():
-                        run_market_maker(mm, snap, feed, refs, ledgers, acct, a, skip=touched)
+                        # MM stays out of markets resting exits work or may soon work (fv/cv positions)
+                        mm_avoid = exits_mkts | ({mk["id"] for mk in snap.markets
+                                                  if ledger.position(mk["id"]) or cv_ledger.position(mk["id"])}
+                                                 if exits is not None else set())
+                        run_market_maker(mm, snap, feed, refs, ledgers, acct, a, skip=touched,
+                                         exits_markets=frozenset(mm_avoid))
+                    if exits is not None and live:
+                        for mk in snap.markets:
+                            m_ = mk["id"]
+                            fvp, cvp = ledger.position(m_), cv_ledger.position(m_)
+                            if not (fvp or cvp or m_ in exits_mkts):
+                                continue
+                            busy = (m_ in mm_busy or bool(mm_ledger.position(m_)) or bool(ll_ledger.position(m_))
+                                    or bool(fvp and cvp))
+                            exits.submit(Book.from_levels(m_, snap.levels[m_]),
+                                         {"fv": (refs.fair(m_) or {}).get("fair"), "cv": fair_of(m_)},
+                                         acct.get(m_, 0.0), busy)
                 scan.pop("complete_races", None)
                 write_books(BOT_BOOKS, book_cache)
                 if scan.get("rate_limited"):
@@ -1041,6 +1093,7 @@ def main():
                      mm=None if mm is None else {"enabled": mm.enabled, "tested": mm.tested, "markets": sorted(mm.active_snapshot), **mm.stats,
                          "inventory_capital": round(mm_ledger.gross(), 2),
                          "realized": round(sum(r.get("realized", 0) for r in mm_ledger.rows.values()), 2)},
+                         exits=None if exits is None else {**exits.stats, "markets": sorted(exits.markets_snapshot)},
                          fv=None if refs is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
                                                          "positions": sum(1 for r in ledger.rows.values() if r.get("qty")),
                                                          "references": refs.last_refresh})
@@ -1052,6 +1105,8 @@ def main():
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if mm is not None:
             mm.stop_worker(60)                 # finish the order in flight, then stop
+        if exits is not None:
+            exits.stop_worker(60)
         try:
             log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
         except Exception as e:
@@ -1061,6 +1116,11 @@ def main():
                     log.info("shutdown: cancelled %d known quote(s)", mm.cancel_all())
                 except Exception as e2:
                     log.error("shutdown: could not cancel known quotes: %s", e2)
+            if exits is not None:
+                try:
+                    log.info("shutdown: cancelled %d resting exit(s)", exits.cancel_all())
+                except Exception as e2:
+                    log.error("shutdown: could not cancel resting exits: %s", e2)
 
 
 if __name__ == "__main__":

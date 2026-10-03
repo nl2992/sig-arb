@@ -55,9 +55,12 @@ def _rows(path: pathlib.Path) -> List[dict]:
 
 # ------------------------------------------------------------------ intents
 def write_intent(coid: str, strategy: str, market_id: int, yes_side: str, limit: float, qty: float,
-                 path: pathlib.Path = None) -> None:
-    _append(path or INTENT_LOG, {"ts": _now(), "client_order_id": coid, "state": "SENT", "strategy": strategy,
-                                 "market_id": int(market_id), "yes_side": yes_side, "limit": limit, "qty": qty})
+                 path: pathlib.Path = None, resting: bool = False) -> None:
+    row = {"ts": _now(), "client_order_id": coid, "state": "SENT", "strategy": strategy,
+           "market_id": int(market_id), "yes_side": yes_side, "limit": limit, "qty": qty}
+    if resting:
+        row["resting"] = True              # meant to rest: may fill long after it was placed
+    _append(path or INTENT_LOG, row)
 
 
 def resolve_intent(coid: str, state: str, path: pathlib.Path = None, **fields) -> None:
@@ -67,9 +70,9 @@ def resolve_intent(coid: str, state: str, path: pathlib.Path = None, **fields) -
 def in_doubt(path: pathlib.Path = None, resting_strategies: tuple = ("mm",),
              resting_window_s: float = 6 * 3600) -> List[dict]:
     """Intents that may have filled without the bot booking it, oldest first:
-    latest state SENT or UNKNOWN, or a recent resting quote (strategy in
-    `resting_strategies`, DONE with less than its quantity filled), since a quote that
-    rested can fill later, e.g. while a restart could not cancel it."""
+    latest state SENT or UNKNOWN, or a recent resting order (strategy in
+    `resting_strategies` or flagged resting, DONE with less than its quantity filled),
+    since an order that rested can fill later, e.g. while a restart could not cancel it."""
     latest: Dict[str, dict] = {}
     first: Dict[str, dict] = {}
     for row in _rows(path or INTENT_LOG):
@@ -84,7 +87,7 @@ def in_doubt(path: pathlib.Path = None, resting_strategies: tuple = ("mm",),
         state = latest[c]["state"]
         if state in ("SENT", "UNKNOWN"):
             out.append({**first[c], "state": state})
-        elif state == "DONE" and first[c].get("strategy") in resting_strategies:
+        elif state == "DONE" and (first[c].get("strategy") in resting_strategies or first[c].get("resting")):
             filled = float(latest[c].get("filled") or 0)
             try:
                 age = (now - dt.datetime.fromisoformat(first[c]["ts"])).total_seconds()

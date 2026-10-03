@@ -11,8 +11,10 @@ Picker   ranks every market the bot has a recent book for by the gap between SIG
          top `max_bets` with gap >= `min_edge`, at most one per race.
 Entry    when a target's race is read, walk SIG's book up to `max_bet` capital at prices
          still `min_edge` better than fair.
-Exit     hold to settlement; exit only if the consensus moves `stop` against the entry
-         (thesis broken), at a SIG price no more than `max_slip` worse than fair.
+Exit     take profit once SIG reaches fair (within `exit_band`), never below the entry: the
+         edge is gone, so the capital moves to the next-best bet. Stop if the consensus
+         moves `stop` against the entry (thesis broken), at a SIG price no more than
+         `max_slip` worse than fair. Otherwise hold to settlement.
 Ledger   logs/cv_positions.json.
 """
 from __future__ import annotations
@@ -69,7 +71,7 @@ def _race(title: str) -> str:
 
 
 def plan(book: Book, fair: Optional[float], ledger, *, min_edge: float, max_bet: float, gross_left: float,
-         stop: float, max_slip: float) -> Optional[dict]:
+         stop: float, max_slip: float, exit_band: Optional[float] = None) -> Optional[dict]:
     if fair is None:
         return None
     m = book.market_id
@@ -86,6 +88,13 @@ def plan(book: Book, fair: Optional[float], ledger, *, min_edge: float, max_bet:
                                                                           max_slip=max_slip):
             return {"yes_side": "BUY", "limit": book.asks[0][0], "qty": float(min(-pos, book.asks[0][1])),
                     "exit": "stop", "fair": round(fair, 4), "entry": round(entry, 4)}
+        # take profit: SIG has reached fair (the edge is gone) at a price no worse than the entry
+        if exit_band is not None and pos > 0 and book.bids and book.bids[0][0] >= max(fair - exit_band, entry):
+            return {"yes_side": "SELL", "limit": book.bids[0][0], "qty": float(min(pos, book.bids[0][1])),
+                    "exit": "converged", "fair": round(fair, 4), "entry": round(entry, 4)}
+        if exit_band is not None and pos < 0 and book.asks and book.asks[0][0] <= min(fair + exit_band, entry):
+            return {"yes_side": "BUY", "limit": book.asks[0][0], "qty": float(min(-pos, book.asks[0][1])),
+                    "exit": "converged", "fair": round(fair, 4), "entry": round(entry, 4)}
     budget = min(max_bet - ledger.capital(m), gross_left)
     if budget <= 0:
         return None

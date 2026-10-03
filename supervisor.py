@@ -237,6 +237,10 @@ def status() -> int:
               f"{' (' + '; '.join(st.get('live_blockers') or []) + ')' if not st.get('live') else ''}")
         print(f"token        {'unknown' if left is None else f'{left / 60:.0f} min left'}")
         print(f"exposure     {st.get('gross')} / {st.get('max_gross')}  | strategies {st.get('strategies')}")
+        if st.get("exits"):
+            x = st["exits"]
+            print(f"exits        {x.get('resting', 0)} resting take-profit orders | placed {x.get('placed', 0)}, "
+                  f"fills {x.get('fills', 0)}, errors {x.get('errors', 0)}")
         if st.get("reserve"):
             r = st["reserve"]
             print(f"reserve      {r['used']:,.0f} / {r['capital']:,.0f} above the cap, for entries expected to "

@@ -28,7 +28,7 @@ import pathlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import requests
 
@@ -298,6 +298,8 @@ class MarketMaker:
         self.active_snapshot: frozenset = frozenset()
         self.stats = {"open_quotes": 0, "errors": 0, "requests": 0}
         self.tested = False
+        # markets another component explains fills for (resting exits): never infer MM fills there
+        self.skip_sync: Callable[[], frozenset] = lambda: frozenset()
 
     # -- account sync: open orders + inventory inferred from holdings
     def sync(self, portfolio: dict, other_expected: Dict[int, float]) -> List[dict]:
@@ -312,7 +314,10 @@ class MarketMaker:
             if str(h.get("settlementOption", "YES")).upper() == "YES":
                 held[int(h["marketId"])] += float(h.get("quantity") or 0)
         fills = []
+        skip = self.skip_sync()
         for m in set(self.active) | {int(k) for k in self.ledger.rows}:
+            if m in skip and m not in self.active:
+                continue
             inv = held.get(m, 0.0) - other_expected.get(m, 0.0)
             delta = inv - self.ledger.position(m)
             if abs(delta) < 0.5:
