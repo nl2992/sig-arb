@@ -41,6 +41,7 @@ import fair_value
 import fast_scan
 import gates
 import holdings_check
+import news_watch
 import positions
 import resting_exits
 import scalper
@@ -376,7 +377,7 @@ def journal(r: ArbResult, res: dict, mode: str, live: bool = False):
 
 def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, risk=None,
                    holdings: dict = None, skip: set = frozenset(), touched: set = None,
-                   skip_entries: set = frozenset(), exits_claim=None) -> dict:
+                   skip_entries: set = frozenset(), exits_claim=None, news_ok=None) -> dict:
     """Fair-value orders for the markets in one freshly read race (single-leg, IOC-like).
     Room is the tightest of: account-wide exposure cap, fair-value cap, per-race cap
     (sibling markets are one bet), per-market cap; size scales with the gap."""
@@ -403,6 +404,8 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
             continue
         if not plan.get("exit") and m["id"] in skip_entries:
             continue                           # another strategy works this market; exits still run
+        if not plan.get("exit") and news_ok is not None and not news_ok(m["id"], plan["yes_side"]):
+            continue                           # fresh news: only with the reference move (news_watch)
         if plan.get("exit") and exits_claim is not None and not exits_claim(m["id"]):
             continue                           # a resting exit works it (stops wait for the next snapshot)
         out["fv_signals"] += 1
@@ -480,7 +483,7 @@ def journal_single(strategy: str, market_id: int, yes_side: str, qty: float, pri
 
 
 def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, a, live: bool, risk=None,
-                   holdings: dict = None, touched: set = None, exits_claim=None) -> dict:
+                   holdings: dict = None, touched: set = None, exits_claim=None, news_ok=None) -> dict:
     """Enter / stop out conviction bets for the targets in one freshly read race."""
     out = {"cv_signals": 0, "cv_orders": 0}
     for m in snap.markets:
@@ -499,6 +502,8 @@ def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, 
             continue
         if plan.get("exit") and exits_claim is not None and not exits_claim(m["id"]):
             continue                           # a resting exit works it (stops wait for the next snapshot)
+        if not plan.get("exit") and news_ok is not None and not news_ok(m["id"], plan["yes_side"]):
+            continue                           # fresh news: only with the reference move (news_watch)
         out["cv_signals"] += 1
         kind = f"EXIT_{plan['exit'].upper()}" if plan.get("exit") else "ENTRY"
         desc = (f"CV {kind} #{m['id']} {m['title'][9:60]}: {plan['yes_side']} YES x{plan['qty']:g} @ {plan['limit']}"
@@ -595,7 +600,8 @@ def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=N
 
 
 def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: dict, a,
-                     skip: set = frozenset(), exits_markets: frozenset = frozenset()) -> None:
+                     skip: set = frozenset(), exits_markets: frozenset = frozenset(),
+                     news_held: frozenset = frozenset()) -> None:
     """Queue requotes for one freshly read race; the MM worker thread sends the orders."""
     for m in snap.markets:
         if m["id"] in skip or (m["id"] in exits_markets and m["id"] not in mm.active_snapshot):
@@ -615,7 +621,7 @@ def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: di
         if not mm.tested and not test_ok:
             continue
         mv = feed.move(m["id"], 120) if feed is not None else None
-        moving = mv is not None and abs(mv) >= 0.01
+        moving = (mv is not None and abs(mv) >= 0.01) or m["id"] in news_held   # fresh news: pull quotes
         mm.submit(book, fair, moving, holdings.get(m["id"], 0.0), test_ok)
 
 
@@ -772,6 +778,10 @@ def main():
     ap.add_argument("--no-resting-exits", dest="resting_exits", action="store_false",
                     help="do not rest take-profit orders for fv/cv positions")
     ap.add_argument("--exit-requote", type=float, default=60, help="resting exits: min sec between requotes")
+    ap.add_argument("--no-news", dest="news", action="store_false", help="do not watch SIG's news feed")
+    ap.add_argument("--news-poll", type=float, default=1200, help="news: sec between polls of one race's feed")
+    ap.add_argument("--news-hold", type=float, default=900,
+                    help="news: after a new headline, entries only follow the reference move for this long")
     ap.add_argument("--mm-min-price", type=float, default=0.10, help="mm: only quote fair values at or above")
     ap.add_argument("--mm-max-price", type=float, default=0.90, help="mm: only quote fair values at or below")
     ap.add_argument("--mm-poll", type=float, default=20, help="mm: sec between open-order/fill syncs")
@@ -875,6 +885,12 @@ def main():
         if mm is not None:
             mm.skip_sync = lambda: exits.claimed
 
+    # SIG's news feed as a trigger (rescan the race) and a guard (entries follow the reference move).
+    nw = None
+    if getattr(a, "news", False) and refs is not None:
+        nw = news_watch.NewsWatch(cli, {r: sorted(legs.values()) for r, legs in scanner.groups.items()},
+                                  poll_s=a.news_poll, hold_s=a.news_hold)
+
     def fair_of(m_):
         f_ = feed.mid(m_) if feed is not None else None
         if f_ is None and refs is not None:
@@ -965,6 +981,16 @@ def main():
                     cv_ranked_at = time.time()
                     if feed is not None or True:
                         scanner.boost |= {r for r in map(scanner.race_of, cv_targets) if r}
+                if nw is not None:
+                    if not scanner.paused_for():
+                        nw.step()                            # one news request per pass, between book scans
+                    watch_mkts = set(acct) | set(cv_targets) | (set(mm.active_snapshot) if mm is not None else set())
+                    nw.watch({r for r in map(scanner.race_of, watch_mkts) if r})
+                    for ev in nw.drain(fair_of):
+                        log.info("NEWS %s: %s", ev["race"], " | ".join(str(h["title"])[:90] for h in ev["headlines"][:3]))
+                    scanner.boost = set(getattr(scanner, "boost", set())) | nw.boosted_races()
+                news_ok = (lambda m_, s_: nw.entry_ok(m_, s_, fair_of)) if nw is not None else None
+                news_held = nw.held_markets() if nw is not None else frozenset()
                 # Each race is evaluated, and traded, as soon as all its books arrive.
                 for race, snap in scanner.stream(full=full_sweep, stats=scan):
                     for m in snap.markets:
@@ -1034,7 +1060,7 @@ def main():
                     exits_mkts = exits.markets_snapshot if exits is not None else frozenset()
                     if "cv" in strategies:
                         for k, v in run_conviction(cli, snap, cv_targets, fair_of, cv_ledger, a, live, risk, acct,
-                                                   touched, exits_claim=exits_claim).items():
+                                                   touched, exits_claim=exits_claim, news_ok=news_ok).items():
                             counts[k] = counts.get(k, 0) + v
                     if "ll" in strategies:
                         for k, v in run_leadlag(cli, snap, feed, ll_ledger, a, live, risk, acct,
@@ -1044,7 +1070,8 @@ def main():
                     if "fv" in strategies:
                         fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk, acct,
                                                    skip=touched, touched=touched,
-                                                   skip_entries=mm_busy | set(cv_targets), exits_claim=exits_claim)
+                                                   skip_entries=mm_busy | set(cv_targets), exits_claim=exits_claim,
+                                                   news_ok=news_ok)
                         for k, v in fv_counts.items():
                             counts[k] = counts.get(k, 0) + v
                     if mm is not None and live and not kill_switch_engaged():
@@ -1053,7 +1080,7 @@ def main():
                                                   if ledger.position(mk["id"]) or cv_ledger.position(mk["id"])}
                                                  if exits is not None else set())
                         run_market_maker(mm, snap, feed, refs, ledgers, acct, a, skip=touched,
-                                         exits_markets=frozenset(mm_avoid))
+                                         exits_markets=frozenset(mm_avoid), news_held=news_held)
                     if exits is not None and live:
                         for mk in snap.markets:
                             m_ = mk["id"]
@@ -1094,6 +1121,7 @@ def main():
                          "inventory_capital": round(mm_ledger.gross(), 2),
                          "realized": round(sum(r.get("realized", 0) for r in mm_ledger.rows.values()), 2)},
                          exits=None if exits is None else {**exits.stats, "markets": sorted(exits.markets_snapshot)},
+                         news=None if nw is None else {**nw.stats, "watched": len(nw.watched), "holds": sorted(nw.holds)},
                          fv=None if refs is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
                                                          "positions": sum(1 for r in ledger.rows.values() if r.get("qty")),
                                                          "references": refs.last_refresh})
@@ -1107,6 +1135,8 @@ def main():
             mm.stop_worker(60)                 # finish the order in flight, then stop
         if exits is not None:
             exits.stop_worker(60)
+        if nw is not None:
+            nw.stop()
         try:
             log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
         except Exception as e:

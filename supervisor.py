@@ -241,6 +241,10 @@ def status() -> int:
             x = st["exits"]
             print(f"exits        {x.get('resting', 0)} resting take-profit orders | placed {x.get('placed', 0)}, "
                   f"fills {x.get('fills', 0)}, errors {x.get('errors', 0)}")
+        if st.get("news"):
+            n = st["news"]
+            print(f"news         watching {n.get('watched', 0)} races | {n.get('polls', 0)} polls, {n.get('events', 0)} new "
+                  f"headlines, {n.get('errors', 0)} errors | holding: {', '.join(n.get('holds') or []) or 'none'}")
         if st.get("reserve"):
             r = st["reserve"]
             print(f"reserve      {r['used']:,.0f} / {r['capital']:,.0f} above the cap, for entries expected to "
