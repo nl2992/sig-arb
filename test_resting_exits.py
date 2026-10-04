@@ -272,5 +272,27 @@ class BotHookTests(unittest.TestCase):
             self.assertEqual((held["fv_orders"], free["fv_orders"]), (0, 1))
 
 
+
+class BreakEvenTests(unittest.TestCase):
+    CVT = {"band": 0.005, "stop": 0.10, "floor_at_entry": True, "take": 0.005}
+
+    def test_resting_price_is_break_even_or_a_tick_better(self):
+        self.assertEqual(rx.exit_price(self.CVT, 1000, 0.712, 0.74), 0.72)    # fair above: entry + 0.5c (rounded up)
+        self.assertEqual(rx.exit_price(self.CVT, 1000, 0.712, 0.66), 0.715)   # fair below: break-even (rounded up)
+        self.assertEqual(rx.exit_price(self.CVT, -4983, 0.199, 0.245), 0.195) # short: break-even (rounded down)
+        self.assertEqual(rx.exit_price(self.CVT, -5405, 0.26, 0.25), 0.255)   # short with fair below: entry - 0.5c
+
+    def test_conviction_taker_exits_at_break_even_plus(self):
+        with tempfile.TemporaryDirectory() as d:
+            led = fv.Ledger(pathlib.Path(d) / "cv.json")
+            led.record(1, "SELL", 1000, 0.26)
+            kw = dict(min_edge=0.02, max_bet=4000, gross_left=0, stop=0.10, max_slip=0.03, exit_band=0.005, take=0.005)
+            p = cv.plan(book(bids=[(0.24, 10)], asks=[(0.255, 500)]), 0.30, led, **kw)   # fair moved against us
+            self.assertEqual((p["exit"], p["limit"]), ("target", 0.255))
+            even = cv.plan(book(bids=[(0.24, 10)], asks=[(0.26, 500)]), 0.30, led, **kw)
+            self.assertEqual((even["limit"], even["entry"]), (0.26, 0.26))              # break-even is taken too
+            self.assertIsNone(cv.plan(book(bids=[(0.24, 10)], asks=[(0.265, 500)]), 0.30, led, **kw))   # still a loss: hold
+
+
 if __name__ == "__main__":
     unittest.main()

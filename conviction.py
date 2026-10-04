@@ -71,7 +71,8 @@ def _race(title: str) -> str:
 
 
 def plan(book: Book, fair: Optional[float], ledger, *, min_edge: float, max_bet: float, gross_left: float,
-         stop: float, max_slip: float, exit_band: Optional[float] = None) -> Optional[dict]:
+         stop: float, max_slip: float, exit_band: Optional[float] = None,
+         take: Optional[float] = None) -> Optional[dict]:
     if fair is None:
         return None
     m = book.market_id
@@ -88,6 +89,13 @@ def plan(book: Book, fair: Optional[float], ledger, *, min_edge: float, max_bet:
                                                                           max_slip=max_slip):
             return {"yes_side": "BUY", "limit": book.asks[0][0], "qty": float(min(-pos, book.asks[0][1])),
                     "exit": "stop", "fair": round(fair, 4), "entry": round(entry, 4)}
+        # break-even or better: SIG pays `take` over the entry
+        if take is not None and pos > 0 and book.bids and book.bids[0][0] >= entry + take - 1e-9:
+            return {"yes_side": "SELL", "limit": book.bids[0][0], "qty": float(min(pos, book.bids[0][1])),
+                    "exit": "target", "fair": round(fair, 4), "entry": round(entry, 4)}
+        if take is not None and pos < 0 and book.asks and book.asks[0][0] <= entry - take + 1e-9:
+            return {"yes_side": "BUY", "limit": book.asks[0][0], "qty": float(min(-pos, book.asks[0][1])),
+                    "exit": "target", "fair": round(fair, 4), "entry": round(entry, 4)}
         # take profit: SIG has reached fair (the edge is gone) at a price no worse than the entry
         if exit_band is not None and pos > 0 and book.bids and book.bids[0][0] >= max(fair - exit_band, entry):
             return {"yes_side": "SELL", "limit": book.bids[0][0], "qty": float(min(pos, book.bids[0][1])),

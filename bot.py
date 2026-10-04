@@ -545,12 +545,14 @@ def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, 
         def replan(room):
             return conviction.plan(book, fair, ledger, min_edge=a.cv_min_edge, max_bet=a.cv_max_bet,
                                    gross_left=room, stop=a.cv_stop, max_slip=getattr(a, "fv_max_slip", 0.03),
-                                   exit_band=getattr(a, "cv_exit", None))
+                                   exit_band=getattr(a, "cv_exit", None), take=getattr(a, "cv_take", None))
         plan = reserve_plan(replan(gross_left), replan, a, gross_left, account_room(a, risk, high_ev=True))
         if not plan:
             continue
         if plan.get("exit") and exits_claim is not None and not exits_claim(m["id"]):
             continue                           # a resting exit works it (stops wait for the next snapshot)
+        if not plan.get("exit") and not getattr(a, "cv_entries", True):
+            continue                           # exits only: held bets close at break-even or better
         if not plan.get("exit") and news_ok is not None and not news_ok(m["id"], plan["yes_side"]):
             continue                           # fresh news: only with the reference move (news_watch)
         out["cv_signals"] += 1
@@ -810,16 +812,16 @@ def main():
     ap.add_argument("--ll-max-hold", type=float, default=2700, help="ll: time stop, sec")
     ap.add_argument("--mm-edge", type=float, default=0.005, help="mm: quote at least this far from fair")
     ap.add_argument("--mm-size", type=float, default=600, help="mm: shares per quote")
-    ap.add_argument("--mm-max-inventory", type=float, default=1200, help="mm: shares per market")
-    ap.add_argument("--mm-max-capital", type=float, default=10000,
+    ap.add_argument("--mm-max-inventory", type=float, default=2000, help="mm: shares per market")
+    ap.add_argument("--mm-max-capital", type=float, default=15000,
                     help="mm: total inventory capital (its own budget); at the cap only exits are quoted")
     ap.add_argument("--mm-take", type=float, default=0.01, help="mm: exit profit vs entry")
     ap.add_argument("--mm-max-hold", type=float, default=1800, help="mm: after this, exit at fair")
     ap.add_argument("--mm-min-spread", type=float, default=0.015, help="mm: only quote SIG spreads this wide")
-    ap.add_argument("--mm-max-markets", type=int, default=40)
+    ap.add_argument("--mm-max-markets", type=int, default=60)
     ap.add_argument("--no-mm-claw", dest="mm_claw", action="store_false",
                     help="do not move capital freed by fv/cv/arb exits to market making")
-    ap.add_argument("--mm-claw-max", type=float, default=40000, help="mm: budget ceiling with clawed-back capital")
+    ap.add_argument("--mm-claw-max", type=float, default=50000, help="mm: budget ceiling with clawed-back capital")
     ap.add_argument("--cv-max-bets", type=int, default=6, help="cv: concurrent conviction bets")
     ap.add_argument("--cv-max-bet", type=float, default=4000, help="cv: capital per bet")
     ap.add_argument("--cv-max-gross", type=float, default=24000, help="cv: total capital")
@@ -828,6 +830,10 @@ def main():
     ap.add_argument("--cv-max-fair", type=float, default=0.85, help="cv: only races with fair at or below")
     ap.add_argument("--cv-stop", type=float, default=0.10, help="cv: exit if the consensus moves this far against")
     ap.add_argument("--cv-refresh", type=float, default=120, help="cv: sec between target re-ranking")
+    ap.add_argument("--cv-entries", dest="cv_entries", action="store_true",
+                    help="cv: allow new conviction bets and top-ups (off: held bets only exit)")
+    ap.add_argument("--cv-take", type=float, default=0.005,
+                    help="cv: exit once SIG pays this much over the entry (break-even or better)")
     ap.add_argument("--cv-exit", type=float, default=0.005,
                     help="cv: take profit once SIG is within this of fair (never below the entry)")
     ap.add_argument("--no-resting-exits", dest="resting_exits", action="store_false",
@@ -935,7 +941,7 @@ def main():
     exits = None
     if getattr(a, "resting_exits", False) and strategies & {"fv", "cv"} and refs is not None:
         rules = {"fv": {"tp": a.fv_tp, "band": a.fv_exit, "stop": a.fv_stop},
-                 "cv": {"band": a.cv_exit, "stop": a.cv_stop, "floor_at_entry": True}}
+                 "cv": {"band": a.cv_exit, "stop": a.cv_stop, "floor_at_entry": True, "take": a.cv_take}}
         exits = resting_exits.RestingExits(cli, {k: ledgers[k] for k in ("fv", "cv") if k in strategies},
                                            place_tracked, rules=rules, requote_s=a.exit_requote, intent_log=INTENT_LOG)
         exits.start_worker(kill_switch_engaged)

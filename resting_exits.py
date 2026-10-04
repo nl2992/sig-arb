@@ -48,14 +48,18 @@ def exit_price(rule: dict, pos: float, entry: float, fair: float) -> Optional[fl
     band, tp = rule.get("band", 0.0), rule.get("tp")
     if pos > 0:
         px = fair - band
-        if rule.get("floor_at_entry"):
+        if rule.get("take") is not None:          # break-even or better: the nearer of the two
+            px = min(max(px, entry), entry + rule["take"])
+        elif rule.get("floor_at_entry"):
             px = max(px, entry)
         elif tp:
             px = min(px, entry + tp)
         px = ceil_tick(px)
     else:
         px = fair + band
-        if rule.get("floor_at_entry"):
+        if rule.get("take") is not None:
+            px = max(min(px, entry), entry - rule["take"])
+        elif rule.get("floor_at_entry"):
             px = min(px, entry)
         elif tp:
             px = max(px, entry - tp)
