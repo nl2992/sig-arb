@@ -103,11 +103,19 @@ class QuoteTests(unittest.TestCase):
     def test_narrow_spread_no_quotes(self):
         self.assertEqual(scalper.mm_quotes(book(bids=[(0.42, 1)], asks=[(0.43, 1)]), 0.425, 0, None, 0, **self.kw), {})
 
-    def test_inventory_quotes_exit_at_profit(self):
-        q = scalper.mm_quotes(book(bids=[(0.40, 1)], asks=[(0.46, 1)]), 0.43, 300, 0.405, 0, **self.kw)
-        self.assertEqual(q["ask"], (0.43, 300))                                         # max(fair, entry + take)
-        q = scalper.mm_quotes(book(bids=[(0.40, 1)], asks=[(0.46, 1)]), 0.43, -300, 0.455, 0, **self.kw)
-        self.assertEqual(q["bid"], (0.43, 300))
+    def test_inventory_quotes_only_the_exit_priced_off_entry(self):
+        b = book(bids=[(0.40, 1)], asks=[(0.46, 1)])
+        q = scalper.mm_quotes(b, 0.43, 300, 0.405, 0, **self.kw)
+        self.assertEqual(q, {"ask": (0.415, 300)})                                     # entry + 1c, no new bid
+        q = scalper.mm_quotes(b, 0.43, -300, 0.455, 0, **self.kw)
+        self.assertEqual(q, {"bid": (0.445, 300)})
+
+    def test_exit_steps_down_to_break_even_then_flattens(self):
+        kw = {**self.kw, "max_hold_s": 600, "flatten_s": 1800, "max_loss": 0.01}
+        b = book(bids=[(0.40, 1)], asks=[(0.46, 1)])
+        self.assertEqual(scalper.mm_quotes(b, 0.30, 300, 0.405, 900, **kw), {"ask": (0.405, 300)})   # fair ignored
+        self.assertEqual(scalper.mm_quotes(b, 0.30, 300, 0.405, 2000, **kw), {"ask": (0.395, 300)})  # through the bid
+        self.assertEqual(scalper.mm_quotes(b, 0.60, -300, 0.455, 2000, **kw), {"bid": (0.465, 300)})
 
     def test_classify_open_orders(self):
         self.assertEqual(scalper.classify_open_order({"side": "yes", "action": "buy", "priceLimit": 0.4, "quantity": 300}), ("bid", 0.4, 300))

@@ -237,36 +237,40 @@ def classify_open_order(o: dict) -> Optional[tuple]:
     return None
 
 
+def mm_exit_price(long: bool, entry: float, held_s: float, *, take: float, max_hold_s: float,
+                  flatten_s: Optional[float], max_loss: float) -> float:
+    """Pure spread capture: the exit never waits on fair. 1c over the entry at first, the
+    entry itself after max_hold_s, and up to max_loss through it after flatten_s."""
+    if held_s < max_hold_s:
+        t = entry + take if long else entry - take
+    elif flatten_s is None or held_s < flatten_s:
+        t = entry
+    else:
+        t = entry - max_loss if long else entry + max_loss
+    return ceil_tick(t) if long else floor_tick(t)
+
+
 def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[float], held_s: float, *,
               edge: float, size: float, max_inventory: float, take: float, max_hold_s: float,
-              min_spread: float, min_price: float = 0.0, max_price: float = 1.0) -> Dict[str, tuple]:
-    """Desired resting quotes {'bid'|'ask': (YES price, qty)}. Outside [min_price, max_price]
-    only the exit for existing inventory is quoted (long shots move too far on surprises)."""
+              min_spread: float, min_price: float = 0.0, max_price: float = 1.0,
+              flatten_s: Optional[float] = None, max_loss: float = 0.01) -> Dict[str, tuple]:
+    """Desired resting quotes {'bid'|'ask': (YES price, qty)}. Flat: both sides around fair.
+    Holding inventory: only the order that closes it (never add to a position), priced off
+    the entry by time held (mm_exit_price); a price through the book fills at once.
+    Outside [min_price, max_price] no new quotes (long shots move too far on surprises)."""
     if not book.bids or not book.asks:
         return {}
     if not (min_price <= fair <= max_price):
         size = 0                                   # no new risk; exits below still apply
     bb, ba = book.bids[0][0], book.asks[0][0]
     out: Dict[str, tuple] = {}
-    if inventory > 0:                                  # long YES: only the exit ask
-        target = fair if held_s >= max_hold_s else max(fair, avg_entry + take)
-        px = max(ceil_tick(target), round(bb + TICK, 4))
-        out["ask"] = (px, inventory)
-        room = max_inventory - inventory
-        if size and room >= 10 and ba - bb >= min_spread:
-            bid = min(round(bb + TICK, 4), floor_tick(fair - edge))
-            if bid < ba and bid > 0:
-                out["bid"] = (bid, min(size, room))
-        return out
-    if inventory < 0:                                  # short YES: only the exit bid
-        target = fair if held_s >= max_hold_s else min(fair, avg_entry - take)
-        px = min(floor_tick(target), round(ba - TICK, 4))
-        out["bid"] = (px, -inventory)
-        room = max_inventory + inventory
-        if size and room >= 10 and ba - bb >= min_spread:
-            ask = max(round(ba - TICK, 4), ceil_tick(fair + edge))
-            if ask > bb and ask < 1:
-                out["ask"] = (ask, min(size, room))
+    if inventory:                                      # only the closing order, never more risk
+        long = inventory > 0
+        entry = avg_entry if avg_entry is not None else fair
+        px = mm_exit_price(long, entry, held_s, take=take, max_hold_s=max_hold_s, flatten_s=flatten_s,
+                           max_loss=max_loss)
+        if 0 < px < 1:
+            out["ask" if long else "bid"] = (px, abs(inventory))
         return out
     if ba - bb < min_spread or not size:
         return {}
@@ -282,13 +286,14 @@ def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[flo
 class MarketMaker:
     def __init__(self, cli, ledger, *, edge=0.01, size=300, max_inventory=1000, take=0.01, max_hold_s=1800,
                  min_spread=0.02, max_markets=8, requote_s=15, live=False, place=None,
-                 min_price=0.10, max_price=0.90, max_capital=float("inf")):
+                 min_price=0.10, max_price=0.90, max_capital=float("inf"), flatten_s=None, max_loss=0.01):
         self.cli, self.ledger, self.live = cli, ledger, live
         self.edge, self.size, self.max_inventory, self.take = edge, size, max_inventory, take
         self.max_hold_s, self.min_spread, self.max_markets, self.requote_s = max_hold_s, min_spread, max_markets, requote_s
         self.place = place                 # place_tracked-compatible callable (writes intents)
         self.min_price, self.max_price = min_price, max_price
         self.max_capital = max_capital          # total MM inventory; at the cap only exits are quoted
+        self.flatten_s, self.max_loss = flatten_s, max_loss
         self.open: Dict[int, List[dict]] = {}          # market -> open orders (from portfolio)
         self.quoted_at: Dict[int, float] = {}
         self.active: set = set()                        # markets with MM quotes or inventory
@@ -370,7 +375,8 @@ class MarketMaker:
         want = mm_quotes(book, fair, inv, self.ledger.avg_yes(m), self.ledger.held_for(m), edge=self.edge,
                          size=size, max_inventory=self.max_inventory, take=self.take,
                          max_hold_s=self.max_hold_s, min_spread=self.min_spread,
-                         min_price=self.min_price, max_price=self.max_price)
+                         min_price=self.min_price, max_price=self.max_price,
+                         flatten_s=self.flatten_s, max_loss=self.max_loss)
         have = {}
         for o in self.open.get(m, []):
             c = classify_open_order(o)

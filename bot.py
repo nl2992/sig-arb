@@ -812,11 +812,14 @@ def main():
     ap.add_argument("--ll-max-hold", type=float, default=2700, help="ll: time stop, sec")
     ap.add_argument("--mm-edge", type=float, default=0.005, help="mm: quote at least this far from fair")
     ap.add_argument("--mm-size", type=float, default=600, help="mm: shares per quote")
-    ap.add_argument("--mm-max-inventory", type=float, default=2000, help="mm: shares per market")
+    ap.add_argument("--mm-max-inventory", type=float, default=600, help="mm: shares per market")
     ap.add_argument("--mm-max-capital", type=float, default=15000,
                     help="mm: total inventory capital (its own budget); at the cap only exits are quoted")
     ap.add_argument("--mm-take", type=float, default=0.01, help="mm: exit profit vs entry")
-    ap.add_argument("--mm-max-hold", type=float, default=1800, help="mm: after this, exit at fair")
+    ap.add_argument("--mm-max-hold", type=float, default=600, help="mm: after this, exit at break-even")
+    ap.add_argument("--mm-flatten", type=float, default=1800,
+                    help="mm: after this, flatten through the book at up to --mm-max-loss")
+    ap.add_argument("--mm-max-loss", type=float, default=0.01, help="mm: most given up per share to flatten")
     ap.add_argument("--mm-min-spread", type=float, default=0.015, help="mm: only quote SIG spreads this wide")
     ap.add_argument("--mm-max-markets", type=int, default=60)
     ap.add_argument("--no-mm-claw", dest="mm_claw", action="store_false",
@@ -905,7 +908,8 @@ def main():
         mm = scalper.MarketMaker(cli, mm_ledger, edge=a.mm_edge, size=a.mm_size, max_inventory=a.mm_max_inventory,
                                  take=a.mm_take, max_hold_s=a.mm_max_hold, min_spread=a.mm_min_spread,
                                  max_markets=a.mm_max_markets, place=place_tracked,
-                                 min_price=a.mm_min_price, max_price=a.mm_max_price, max_capital=a.mm_max_capital)
+                                 min_price=a.mm_min_price, max_price=a.mm_max_price, max_capital=a.mm_max_capital,
+                                 flatten_s=a.mm_flatten, max_loss=a.mm_max_loss)
         mm.enabled = False                   # until the live self-test passes (in the worker)
     a.claw = (Claw(HERE / "logs" / "claw.json", a.mm_max_capital, a.mm_claw_max)
               if getattr(a, "mm_claw", False) and mm is not None else None)
