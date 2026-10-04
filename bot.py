@@ -326,6 +326,9 @@ class Risk:
             return False, "3-leg edge"
         if getattr(self.a, "max_per_race", None) and r.capital > self.a.max_per_race + 1e-9:
             return False, "per-race cap"
+        claw = getattr(self.a, "claw", None)
+        if claw is not None and r.capital > claw.room(self.gross):
+            return False, "capital reserved for market making"
         if self.gross + r.capital > self.a.max_gross:
             high_ev = r.capital > 0 and r.pnl / r.capital >= getattr(self.a, "reserve_min_roi", float("inf"))
             if not high_ev or self.gross + r.capital > self.a.max_gross + getattr(self.a, "reserve", 0.0):
@@ -352,7 +355,51 @@ def account_room(a, risk, high_ev: bool = False) -> float:
     least reserve_min_roi on their capital."""
     if risk is None:
         return float("inf")
-    return a.max_gross + (getattr(a, "reserve", 0.0) if high_ev else 0.0) - risk.gross
+    room = a.max_gross + (getattr(a, "reserve", 0.0) if high_ev else 0.0) - risk.gross
+    claw = getattr(a, "claw", None)
+    if claw is not None:                     # capital freed by exits belongs to market making now
+        room = min(room, claw.room(risk.gross))
+    return room
+
+
+class Claw:
+    """Capital freed when fv/cv/arb positions hit an exit rule moves to market making.
+    The non-MM strategies' deployed capital is a ratchet: it can only fall (exits), never
+    re-grow; what it gives up is added to the MM budget, up to `mm_max`. Persisted, so a
+    restart keeps what was clawed back."""
+
+    def __init__(self, path: pathlib.Path, mm_base: float, mm_max: float, slack: float = 200.0):
+        self.path, self.mm_base, self.mm_max, self.slack = path, mm_base, mm_max, slack
+        self.start = self.cap = None
+        self.mm_gross = 0.0
+        try:
+            d = json.loads(path.read_text())
+            self.start, self.cap = float(d["start"]), float(d["cap"])
+        except Exception:
+            pass
+
+    def update(self, gross: float, mm_gross: float) -> None:
+        """From the minute snapshot: ratchet the non-MM cap down to what is deployed now."""
+        self.mm_gross = mm_gross
+        nonmm = gross - mm_gross
+        if self.start is None:
+            self.start = self.cap = nonmm
+        self.cap = min(self.cap, nonmm + self.slack)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"start": round(self.start, 2), "cap": round(self.cap, 2),
+                                   "reclaimed": round(self.reclaimed(), 2), "mm_budget": round(self.mm_budget(), 2)}))
+        tmp.replace(self.path)
+
+    def reclaimed(self) -> float:
+        return max(0.0, (self.start or 0.0) - (self.cap or 0.0))
+
+    def mm_budget(self) -> float:
+        return min(self.mm_max, self.mm_base + self.reclaimed())
+
+    def room(self, gross: float) -> float:
+        if self.cap is None:
+            return float("inf")
+        return self.cap - (gross - self.mm_gross)
 
 
 def reserve_plan(plan: Optional[dict], replan, a, base_left: float, high_left: float) -> Optional[dict]:
@@ -404,6 +451,8 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
             continue
         if not plan.get("exit") and m["id"] in skip_entries:
             continue                           # another strategy works this market; exits still run
+        if not plan.get("exit") and not (getattr(a, "fv_min_fair", 0.0) <= plan["fair"] <= getattr(a, "fv_max_fair", 1.0)):
+            continue                           # no new long shots: SIG's crowd keeps them rich until settlement
         if not plan.get("exit") and news_ok is not None and not news_ok(m["id"], plan["yes_side"]):
             continue                           # fresh news: only with the reference move (news_watch)
         if plan.get("exit") and exits_claim is not None and not exits_claim(m["id"]):
@@ -740,7 +789,10 @@ def main():
     ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
     ap.add_argument("--fv-max-gross", type=float, default=45000,
                     help="fv: cap on fair-value capital (leaves room for ll/mm under the venue cap)")
-    ap.add_argument("--fv-tp", type=float, default=0.015, help="fv: take profit vs entry")
+    ap.add_argument("--fv-tp", type=float, default=0.01, help="fv: take profit vs entry")
+    ap.add_argument("--fv-min-fair", type=float, default=0.10,
+                    help="fv: new entries only where fair is at or above (long shots sit red on SIG's marks)")
+    ap.add_argument("--fv-max-fair", type=float, default=0.90, help="fv: new entries only where fair is at or below")
     ap.add_argument("--fv-stop", type=float, default=0.05,
                     help="fv: exit if the reference fair moves this far against the entry")
     ap.add_argument("--fv-max-slip", type=float, default=0.03, help="fv: stop/time exits only within this of fair")
@@ -759,12 +811,15 @@ def main():
     ap.add_argument("--mm-edge", type=float, default=0.005, help="mm: quote at least this far from fair")
     ap.add_argument("--mm-size", type=float, default=600, help="mm: shares per quote")
     ap.add_argument("--mm-max-inventory", type=float, default=1200, help="mm: shares per market")
-    ap.add_argument("--mm-max-capital", type=float, default=5000,
+    ap.add_argument("--mm-max-capital", type=float, default=10000,
                     help="mm: total inventory capital (its own budget); at the cap only exits are quoted")
     ap.add_argument("--mm-take", type=float, default=0.01, help="mm: exit profit vs entry")
     ap.add_argument("--mm-max-hold", type=float, default=1800, help="mm: after this, exit at fair")
     ap.add_argument("--mm-min-spread", type=float, default=0.015, help="mm: only quote SIG spreads this wide")
-    ap.add_argument("--mm-max-markets", type=int, default=25)
+    ap.add_argument("--mm-max-markets", type=int, default=40)
+    ap.add_argument("--no-mm-claw", dest="mm_claw", action="store_false",
+                    help="do not move capital freed by fv/cv/arb exits to market making")
+    ap.add_argument("--mm-claw-max", type=float, default=40000, help="mm: budget ceiling with clawed-back capital")
     ap.add_argument("--cv-max-bets", type=int, default=6, help="cv: concurrent conviction bets")
     ap.add_argument("--cv-max-bet", type=float, default=4000, help="cv: capital per bet")
     ap.add_argument("--cv-max-gross", type=float, default=24000, help="cv: total capital")
@@ -846,6 +901,8 @@ def main():
                                  max_markets=a.mm_max_markets, place=place_tracked,
                                  min_price=a.mm_min_price, max_price=a.mm_max_price, max_capital=a.mm_max_capital)
         mm.enabled = False                   # until the live self-test passes (in the worker)
+    a.claw = (Claw(HERE / "logs" / "claw.json", a.mm_max_capital, a.mm_claw_max)
+              if getattr(a, "mm_claw", False) and mm is not None else None)
     worker_live = {"live": False}
     if strategies & {"fv", "mm", "cv"}:
         refs = fair_value.ReferencePrices()
@@ -936,6 +993,10 @@ def main():
                         fetched_at = time.time()
                         port = cli.portfolio()
                         risk.gross = holdings_check.deployed(port)
+                        if getattr(a, "claw", None) is not None:
+                            a.claw.update(risk.gross, mm_ledger.gross())
+                            if mm is not None:
+                                mm.max_capital = a.claw.mm_budget()
                         acct = holdings_check.actual_holdings(port)
                         if exits is not None:          # book resting-exit fills before MM and reconciliation
                             for f_ in exits.sync(port, lambda: holdings_check.expected_holdings(checker.rows(), EXEC_LOG),
@@ -1121,6 +1182,9 @@ def main():
                          "inventory_capital": round(mm_ledger.gross(), 2),
                          "realized": round(sum(r.get("realized", 0) for r in mm_ledger.rows.values()), 2)},
                          exits=None if exits is None else {**exits.stats, "markets": sorted(exits.markets_snapshot)},
+                         claw=None if a.claw is None or a.claw.cap is None else {
+                             "start": round(a.claw.start, 2), "cap": round(a.claw.cap, 2),
+                             "reclaimed": round(a.claw.reclaimed(), 2), "mm_budget": round(a.claw.mm_budget(), 2)},
                          news=None if nw is None else {**nw.stats, "watched": len(nw.watched), "holds": sorted(nw.holds)},
                          fv=None if refs is None else {"gross": round(ledger.gross(), 2), "max_gross": a.fv_max_gross,
                                                          "positions": sum(1 for r in ledger.rows.values() if r.get("qty")),

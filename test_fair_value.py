@@ -175,3 +175,22 @@ class PuntExitTests(unittest.TestCase):
         self.assertIsNone(fv.exit_signal(book(bids=[(0.90, 500)]), 0.93, 300, entry=0.915, **self.kw))    # hold
         tm = fv.exit_signal(book(bids=[(0.91, 500)]), 0.93, 300, entry=0.915, held_s=7200, max_hold_s=3600, **self.kw)
         self.assertEqual(tm["exit"], "time")
+
+
+class LongShotFilterTests(unittest.TestCase):
+    def test_no_new_long_shot_entries_but_exits_still_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = pathlib.Path(d)
+            refs = Refs({("kalshi", "K"): (0.01, 0.03, 5)}, {386: [("kalshi", "K")]})     # fair 0.02: a long shot
+            snap = Snapshot("t", [{"id": 386, "title": "Will the Republican Party win the Delaware Senate?"}],
+                            {386: [{"exchangeId": 9, "side": "BUY", "isYes": True, "price": 0.06, "quantity": 500}]})
+            cli = mock.Mock()
+            cli.place.return_value = {"dryRun": True, "orders": [], "filledQuantity": 500}
+            a = argparse.Namespace(fv_threshold=0.03, fv_exit=0.01, fv_max_market=500, fv_max_gross=5000, mode="auto",
+                                   fv_unit=500, fv_max_race=2500, max_gross=10000, fv_min_fair=0.10, fv_max_fair=0.90)
+            with mock.patch.object(bot, "EXEC_LOG", d / "e.jsonl"), mock.patch.object(bot, "KILL_SWITCH", d / "K"):
+                entry = bot.run_fair_value(cli, snap, refs, fv.Ledger(d / "a.json"), a, live=False)
+                led = fv.Ledger(d / "b.json")
+                led.record(386, "BUY", 100, 0.02)
+                exit_ = bot.run_fair_value(cli, snap, refs, led, a, live=False)
+            self.assertEqual((entry["fv_orders"], exit_["fv_orders"]), (0, 1))

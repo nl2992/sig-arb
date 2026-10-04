@@ -165,5 +165,34 @@ class StopGuardTests(unittest.TestCase):
             self.assertIsNone(cv.plan(book(bids=[(0.17, 5000)], asks=[(0.30, 1)]), 0.21, led, **kw))
 
 
+class ClawTests(unittest.TestCase):
+    def test_exits_move_capital_to_market_making_and_never_come_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = bot.Claw(pathlib.Path(d) / "claw.json", mm_base=10000, mm_max=40000, slack=0)
+            c.update(gross=98000, mm_gross=6000)               # 92k in fv/cv/arb at the start
+            self.assertEqual((c.cap, c.mm_budget()), (92000, 10000))
+            c.update(gross=93000, mm_gross=6000)               # exits freed 5k
+            self.assertEqual((c.cap, c.reclaimed(), c.mm_budget()), (87000, 5000, 15000))
+            c.update(gross=95000, mm_gross=6000)               # fv cannot re-grow past the ratchet
+            self.assertEqual(c.cap, 87000)
+            self.assertEqual(c.room(95000), -2000)
+            again = bot.Claw(pathlib.Path(d) / "claw.json", mm_base=10000, mm_max=40000)
+            self.assertEqual((again.cap, again.mm_budget()), (87000, 15000))   # survives a restart
+
+    def test_budget_ceiling_and_entry_room(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = bot.Claw(pathlib.Path(d) / "claw.json", mm_base=10000, mm_max=40000, slack=0)
+            c.update(gross=98000, mm_gross=0)
+            c.update(gross=30000, mm_gross=0)
+            self.assertEqual(c.mm_budget(), 40000)
+            a = args(claw=c, max_gross=90000)
+            risk = bot.Risk(a)
+            risk.gross = 30000
+            self.assertEqual(bot.account_room(a, risk), 0)    # fv/cv entries get nothing new
+            arb = mock.Mock(marginal_edge=0.02, legs=[1, 2], capital=500, pnl=20, race="R")
+            a.min_edge, a.min_edge_3leg, a.max_per_race, a.cooldown = 0.015, 0.02, 2000, 0
+            self.assertEqual(risk.ok(arb), (False, "capital reserved for market making"))
+
+
 if __name__ == "__main__":
     unittest.main()

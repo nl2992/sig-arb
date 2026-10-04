@@ -241,6 +241,10 @@ def status() -> int:
             x = st["exits"]
             print(f"exits        {x.get('resting', 0)} resting take-profit orders | placed {x.get('placed', 0)}, "
                   f"fills {x.get('fills', 0)}, errors {x.get('errors', 0)}")
+        if st.get("claw"):
+            c = st["claw"]
+            print(f"mm budget    {c['mm_budget']:,.0f} ({c['reclaimed']:,.0f} reclaimed from exits; other strategies "
+                  f"capped at {c['cap']:,.0f})")
         if st.get("news"):
             n = st["news"]
             print(f"news         watching {n.get('watched', 0)} races | {n.get('polls', 0)} polls, {n.get('events', 0)} new "
