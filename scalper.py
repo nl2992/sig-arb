@@ -296,11 +296,13 @@ class MarketMaker:
         self.flatten_s, self.max_loss = flatten_s, max_loss
         self.open: Dict[int, List[dict]] = {}          # market -> open orders (from portfolio)
         self.quoted_at: Dict[int, float] = {}
-        self.active: set = set()                        # markets with MM quotes or inventory
+        # markets with MM quotes or inventory; held inventory survives a restart, so its exit is
+        # always worked even where the market no longer qualifies for new quotes
+        self.active: set = {int(m) for m, r in ledger.rows.items() if r.get("qty")}
         self.enabled = True
         self.last_quote_px: Dict[tuple, float] = {}    # (market, side) -> price of our last quote
         self.lock = threading.RLock()
-        self.active_snapshot: frozenset = frozenset()
+        self.active_snapshot: frozenset = frozenset(self.active)
         self.stats = {"open_quotes": 0, "errors": 0, "requests": 0}
         self.tested = False
         # markets another component explains fills for (resting exits): never infer MM fills there

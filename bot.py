@@ -810,7 +810,7 @@ def main():
     ap.add_argument("--ll-tp", type=float, default=0.02, help="ll: take profit vs entry")
     ap.add_argument("--ll-stop", type=float, default=0.03, help="ll: stop loss vs entry")
     ap.add_argument("--ll-max-hold", type=float, default=2700, help="ll: time stop, sec")
-    ap.add_argument("--mm-edge", type=float, default=0.005, help="mm: quote at least this far from fair")
+    ap.add_argument("--mm-edge", type=float, default=0.015, help="mm: quote at least this far from fair")
     ap.add_argument("--mm-size", type=float, default=600, help="mm: shares per quote")
     ap.add_argument("--mm-max-inventory", type=float, default=600, help="mm: shares per market")
     ap.add_argument("--mm-max-capital", type=float, default=15000,
@@ -820,7 +820,7 @@ def main():
     ap.add_argument("--mm-flatten", type=float, default=1800,
                     help="mm: after this, flatten through the book at up to --mm-max-loss")
     ap.add_argument("--mm-max-loss", type=float, default=0.01, help="mm: most given up per share to flatten")
-    ap.add_argument("--mm-min-spread", type=float, default=0.015, help="mm: only quote SIG spreads this wide")
+    ap.add_argument("--mm-min-spread", type=float, default=0.02, help="mm: only quote SIG spreads this wide")
     ap.add_argument("--mm-max-markets", type=int, default=60)
     ap.add_argument("--no-mm-claw", dest="mm_claw", action="store_false",
                     help="do not move capital freed by fv/cv/arb exits to market making")

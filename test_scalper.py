@@ -218,6 +218,13 @@ class PriceBandTests(Tmp):
         mm.active.add(2)
         self.assertTrue(mm.eligible(2, 0, 0.03))                          # still managed until flat
 
+    def test_held_inventory_is_managed_after_restart(self):
+        self.led.record(3, "BUY", 200, 0.95)                             # fair now out of band
+        mm = scalper.MarketMaker(mock.Mock(), self.led, min_price=0.10, max_price=0.90)
+        self.assertIn(3, mm.active_snapshot)
+        self.assertTrue(mm.eligible(3, 0, 0.98))
+        self.assertFalse(mm.eligible(4, 0, 0.98))
+
 
 class WorkerTests(Tmp):
     def make(self, kill=lambda: False):
