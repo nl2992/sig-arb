@@ -210,3 +210,40 @@ class OrderTimeoutTests(unittest.TestCase):
             c.place_raw(1042, "BUY", 0.4, 10, dry_run=False)
             c.cancel("o1", dry_run=False)
         self.assertTrue(all(call.kwargs["timeout"] >= 60 for call in post.call_args_list))
+
+
+class PacerTests(unittest.TestCase):
+    def make(self, **kw):
+        now = [0.0]
+        slept = []
+
+        def sleep(d):
+            slept.append(d)
+            now[0] += d
+        return sig_client.Pacer(clock=lambda: now[0], sleep=sleep, **kw), now, slept
+
+    def test_reads_are_spaced_orders_never_wait(self):
+        p, now, slept = self.make(rate=2.0, step=0.0)
+        p.wait(); p.wait(); p.wait()
+        self.assertEqual(slept, [0.5, 0.5])
+        self.assertEqual(p.wait(urgent=True), 0.0)       # an arb leg goes now, but uses budget
+        self.assertEqual(p.wait(), 1.0)
+
+    def test_aimd_halves_once_per_burst_of_429s(self):
+        p, now, _ = self.make(rate=4.0, step=0.5, cut_gap_s=2.0)
+        p.ok(); p.ok()
+        self.assertEqual(p.rate, 5.0)
+        p.limited(); p.limited(); p.limited()            # parallel threads hit the same limit
+        self.assertEqual(p.rate, 2.5)
+        now[0] += 3
+        p.limited()
+        self.assertEqual(p.rate, 1.25)
+        self.assertEqual(p.snapshot()["limited"], 4)
+
+    def test_background_orders_queue_behind_reads(self):
+        p, now, slept = self.make(rate=1.0, step=0.0)
+        p.wait()
+        self.assertEqual(p.wait(urgent=sig_client._urgent()), 0.0)
+        with sig_client.background():
+            self.assertFalse(sig_client._urgent())
+        self.assertTrue(sig_client._urgent())

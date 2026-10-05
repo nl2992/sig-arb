@@ -2,17 +2,24 @@
 fast_scan.py — tiered order-book scanning for bot.py.
 
 SIG serves one book per request at ~1-3 s each, so a full 237-book sweep takes a minute
-or more. Each tick here fetches:
-  * every HOT race (top-of-book edge within `hot_band` of an arb, or unknown), and
-  * the next `sweep_races` races in a rotation, so every race is refreshed regularly.
+or more. Each tick here fetches, in this order:
+  * boosted races (reference movers, market-making quotes, conviction targets, news),
+  * one race of the rotating sweep, so every race is refreshed regularly,
+  * the PRIORITY pool: HOT races (top-of-book edge within `hot_band` of an arb) and races
+    holding arb sets (`priority`, for early exits), most deserving first: time since the
+    last read, weighted x3 for races at an arb at the touch and x2 for held sets,
+  * the rest of the sweep (`sweep_races` per tick).
+With `books_per_tick` set (the request budget of about one tick), a pass stops adding races
+once that many books are chosen, so the budget goes to the races that matter most.
 
 stream() yields each race the moment all its books have arrived, so the bot can trade
 it immediately; tick() collects a whole pass. Either way only races whose every leg was
 read in that pass are returned, so signals (and orders) are never built from stale books. The market list is
 cached on disk because paging it is slow.
 
-SIG rate-limits (HTTP 429). On the first 429 a tick stops sending requests and the
-scanner pauses 15 s, doubling per consecutive limited tick up to 5 min.
+SIG rate-limits (HTTP 429). sig_client.Pacer spaces requests just under the limit; if a 429
+still comes, the tick stops sending requests and the scanner pauses 2 s, doubling per
+consecutive limited tick up to 2 min.
 """
 from __future__ import annotations
 
@@ -71,7 +78,7 @@ def top_edge(books: List[Book], exhaustive: bool) -> Optional[float]:
 
 
 class TieredScanner:
-    BACKOFF_START_S, BACKOFF_MAX_S = 15.0, 300.0
+    BACKOFF_START_S, BACKOFF_MAX_S = 2.0, 120.0
 
     def __init__(self, cli, markets: List[dict], exhaustive: set, hot_band: float = 0.005,
                  sweep_races: int = 8, concurrency: int = 6):
@@ -79,6 +86,9 @@ class TieredScanner:
         self.hot_band, self.sweep_races, self.concurrency = hot_band, sweep_races, concurrency
         self.pause_until, self.backoff = 0.0, 0.0
         self.boost: set = set()          # races to read first this pass (reference movers, MM quotes)
+        self.priority: set = set()       # races holding arb sets (checked often for early exits)
+        self.books_per_tick = None       # callable -> book budget of one pass; None = unlimited
+        self.last_read: Dict[str, float] = {}
         self.set_markets(markets)
 
     def set_markets(self, markets: List[dict]):
@@ -103,14 +113,33 @@ class TieredScanner:
         if full:
             return list(self.order)
         boosted = [r for r in sorted(getattr(self, "boost", set())) if r in self.groups]
-        chosen = boosted + [r for r in self.hot() if r not in boosted]
-        taken = set(chosen)
+        held = {r for r in getattr(self, "priority", set()) if r in self.groups}
+        pool = [r for r in dict.fromkeys(self.hot() + sorted(held)) if r not in boosted]
+        now = time.time()
+
+        def score(r):
+            age = now - self.last_read.get(r, 0.0)
+            e = self.edge.get(r)
+            return age * (3 if e is not None and e >= 0 else 2 if r in held else 1)
+        pool.sort(key=score, reverse=True)
+        taken = set(boosted) | set(pool)
         cold = [r for r in self.order if r not in taken]
+        sweep = []
         n = min(self.sweep_races, len(cold))
         if n:
             start = self.cursor % len(cold)
-            chosen += (cold[start:] + cold[:start])[:n]
-            self.cursor = start + n
+            sweep = (cold[start:] + cold[:start])[:n]
+        chosen = boosted + sweep[:1] + pool + sweep[1:]
+        budget = self.books_per_tick() if callable(getattr(self, "books_per_tick", None)) else None
+        if budget:
+            out, books = [], 0
+            for r in chosen:
+                if out and books + len(self.groups[r]) > budget:
+                    break
+                out.append(r)
+                books += len(self.groups[r])
+            chosen = out
+        self.cursor = (self.cursor % len(cold) if cold else 0) + sum(1 for r in sweep if r in chosen)
         return chosen
 
     def stream(self, full: bool = False, stats: Optional[dict] = None) -> Iterator[Tuple[str, Snapshot]]:
@@ -162,6 +191,7 @@ class TieredScanner:
                 if pending[r]:
                     continue
                 del pending[r]
+                self.last_read[r] = time.time()
                 legs = list(self.groups[r].values())
                 self.edge[r] = top_edge([Book.from_levels(m, got[m]) for m in legs], r in self.exhaustive)
                 stats["complete"] += 1

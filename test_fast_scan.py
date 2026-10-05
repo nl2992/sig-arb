@@ -83,7 +83,7 @@ class ScannerTests(unittest.TestCase):
         snap, stats = sc.tick(full=True)
         self.assertTrue(stats["rate_limited"])
         self.assertEqual(len(cli.calls), 1)              # nothing sent after the first 429
-        self.assertGreaterEqual(stats["paused_s"], 14)
+        self.assertGreaterEqual(stats["paused_s"], 1.5)
         cli.calls.clear()
         snap, stats = sc.tick()
         self.assertEqual(cli.calls, [])                  # paused: no requests at all
@@ -92,6 +92,19 @@ class ScannerTests(unittest.TestCase):
         sc.pause_until = 0
         sc.tick()
         self.assertEqual(sc.backoff, first * 2)          # consecutive 429s double the pause
+
+    def test_budget_reads_arbs_and_held_sets_before_the_rest(self):
+        sc = self.scanner(FakeCli({}), hot_band=0.05, sweep_races=2)
+        sc.tick(full=True)
+        sc.edge.update({"State1 Senate": 0.01, "State2 Senate": -0.03, "State3 Senate": -0.04})
+        sc.priority = {"State5 Senate"}
+        sc.last_read = {r: time.time() - 10 for r in RACES}
+        sc.books_per_tick = lambda: 6                    # three races of two books
+        chosen = sc.select()
+        self.assertEqual(len(chosen), 3)
+        self.assertEqual(chosen[1:], ["State1 Senate", "State5 Senate"])   # arb at the touch, then held sets
+        sc.last_read["State1 Senate"] = sc.last_read["State5 Senate"] = time.time()
+        self.assertIn("State2 Senate", sc.select())     # just read: the others' turn
 
     def test_client_raises_rate_limited_without_retry(self):
         c = client()

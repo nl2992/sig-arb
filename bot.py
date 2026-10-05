@@ -862,8 +862,10 @@ def main():
     ap.add_argument("--mm-flatten", type=float, default=1800,
                     help="mm: after this, flatten through the book at up to --mm-max-loss")
     ap.add_argument("--mm-max-loss", type=float, default=0.01, help="mm: most given up per share to flatten")
-    ap.add_argument("--mm-min-spread", type=float, default=0.02, help="mm: only quote SIG spreads this wide")
-    ap.add_argument("--mm-max-markets", type=int, default=60)
+    ap.add_argument("--mm-min-spread", type=float, default=0.0,
+                    help="mm: only quote SIG spreads this wide (0: every spread; quotes still sit --mm-edge from fair)")
+    ap.add_argument("--mm-max-markets", type=int, default=100)
+    ap.add_argument("--mm-requote", type=float, default=60, help="mm: min sec between requotes of one market")
     ap.add_argument("--no-mm-claw", dest="mm_claw", action="store_false",
                     help="do not move capital freed by fv/cv/arb exits to market making")
     ap.add_argument("--mm-claw-max", type=float, default=50000, help="mm: budget ceiling with clawed-back capital")
@@ -903,6 +905,8 @@ def main():
     exhaustive = load_exhaustive()
     scanner = fast_scan.TieredScanner(cli, markets, exhaustive, hot_band=a.hot_band,
                                       sweep_races=a.sweep_races, concurrency=a.concurrency)
+    # one pass reads about 1.5 ticks' worth of SIG's request budget, most deserving races first
+    scanner.books_per_tick = lambda: max(6, int(cli.pacer.rate * a.interval * 1.5))
     last_universe, full_sweep, scan = time.time(), True, {}
     risk = Risk(a)
     seen = set()
@@ -951,7 +955,7 @@ def main():
                                  take=a.mm_take, max_hold_s=a.mm_max_hold, min_spread=a.mm_min_spread,
                                  max_markets=a.mm_max_markets, place=place_tracked,
                                  min_price=a.mm_min_price, max_price=a.mm_max_price, max_capital=a.mm_max_capital,
-                                 flatten_s=a.mm_flatten, max_loss=a.mm_max_loss)
+                                 flatten_s=a.mm_flatten, max_loss=a.mm_max_loss, requote_s=a.mm_requote)
         mm.enabled = False                   # until the live self-test passes (in the worker)
     a.claw = (Claw(HERE / "logs" / "claw.json", a.mm_max_capital, a.mm_claw_max)
               if getattr(a, "mm_claw", False) and mm is not None else None)
@@ -1048,8 +1052,12 @@ def main():
                         risk.gross = holdings_check.deployed(port)
                         if getattr(a, "claw", None) is not None:
                             a.claw.update(risk.gross, mm_ledger.gross())
-                            if mm is not None:
-                                mm.max_capital = a.claw.mm_budget()
+                        if mm is not None:
+                            # MM inventory also stays under the account cap, so its fills never eat
+                            # the cash buffer arb legs need; at the cap it only quotes exits
+                            budget = a.claw.mm_budget() if getattr(a, "claw", None) is not None else a.mm_max_capital
+                            room = a.max_gross - risk.gross
+                            mm.max_capital = min(budget, mm_ledger.gross() + room) if room > 0 else 0.0
                         acct = holdings_check.actual_holdings(port)
                         arb_pos = None
                         if exits is not None:          # book resting-exit fills before MM and reconciliation
@@ -1096,6 +1104,11 @@ def main():
                     cv_ranked_at = time.time()
                     if feed is not None or True:
                         scanner.boost |= {r for r in map(scanner.race_of, cv_targets) if r}
+                if "arb" in strategies:              # held arb sets are read often, for early exits
+                    if arb_pos is None:
+                        arb_pos = positions.arb_costs(EXEC_LOG)
+                    scanner.priority = {r for r, legs in scanner.groups.items()
+                                        if arb_exits.complete_sets(list(legs.values()), arb_pos, acct)}
                 if nw is not None:
                     if not scanner.paused_for():
                         nw.step()                            # one news request per pass, between book scans
@@ -1240,7 +1253,7 @@ def main():
                                    "used": round(max(0.0, risk.gross - a.max_gross), 2)} if a.reserve else None),
                          max_per_race=a.max_per_race, min_edge=a.min_edge, counts=counts,
                          last_exec=last_exec, error=error, token_seconds_left=cli.token_seconds_left(),
-                         scan=scan, strategies=sorted(strategies), holdings_check=checker.last,
+                         scan=scan, pacer=cli.pacer.snapshot(), strategies=sorted(strategies), holdings_check=checker.last,
                      cv={"gross": round(cv_ledger.gross(), 2), "bets": sum(1 for r in cv_ledger.rows.values() if r.get("qty")),
                          "targets": {str(k): v for k, v in cv_targets.items()}},
                      ll={"gross": round(ll_ledger.gross(), 2), "positions": sum(1 for r in ll_ledger.rows.values() if r.get("qty")),

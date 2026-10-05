@@ -32,6 +32,7 @@ from typing import Callable, Dict, List, Optional
 
 import requests
 
+import sig_client
 from arb_engine import Book
 from crossvenue_adapters import PolymarketAdapter
 from market_matches import load_registry
@@ -470,27 +471,29 @@ class MarketMaker:
                             self.cancel_all()
                             self._after_change()
                     continue
-                for m, (book, fair, moving, holding, test_ok, at) in pending.items():
-                    if self._stop.is_set() or self._kill():
-                        break
-                    if time.time() - at > 30:            # book too old to quote from
-                        continue
-                    with self.lock:
-                        if not self.tested:
-                            if test_ok and time.time() >= getattr(self, "_retest_at", 0):
-                                result = self.self_test(book, holding)
-                                if result is None:       # SIG errored: not a verdict, retry later
-                                    self._retest_at = time.time() + 120
-                                else:
-                                    self.enabled, self.tested = result, True
+                # quotes queue behind book reads (sig_client.Pacer); kill-switch pulls above do not
+                with sig_client.background():
+                    for m, (book, fair, moving, holding, test_ok, at) in pending.items():
+                        if self._stop.is_set() or self._kill():
+                            break
+                        if time.time() - at > 30:            # book too old to quote from
                             continue
-                        if not self.enabled:
-                            continue
-                        act = self.on_book(book, fair, moving, holding)
-                        self._after_change()
-                    self.stats["requests"] += 1
-                    if act.get("placed") or act.get("cancelled") or act.get("pulled"):
-                        log.info("MM #%s fair %s: %s", m, None if fair is None else round(fair, 4), act)
+                        with self.lock:
+                            if not self.tested:
+                                if test_ok and time.time() >= getattr(self, "_retest_at", 0):
+                                    result = self.self_test(book, holding)
+                                    if result is None:       # SIG errored: not a verdict, retry later
+                                        self._retest_at = time.time() + 120
+                                    else:
+                                        self.enabled, self.tested = result, True
+                                continue
+                            if not self.enabled:
+                                continue
+                            act = self.on_book(book, fair, moving, holding)
+                            self._after_change()
+                        self.stats["requests"] += 1
+                        if act.get("placed") or act.get("cancelled") or act.get("pulled"):
+                            log.info("MM #%s fair %s: %s", m, None if fair is None else round(fair, 4), act)
             except Exception as e:
                 self.stats["errors"] += 1
                 self._last_sync = time.time()          # do not retry the sync every second

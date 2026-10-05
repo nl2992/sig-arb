@@ -12,11 +12,14 @@ Never commit .env.
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import json
 import os
 import pathlib
 import re
+import threading
+import time
 import urllib.parse
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -51,6 +54,73 @@ class RateLimited(RuntimeError):
         self.retry_after = retry_after
 
 
+class Pacer:
+    """One request budget for every SIG call this process makes (scanner threads, the MM and
+    exit workers, news, account reads). Bursts past SIG's limit earn 429s, and the scanner sat
+    those out 83% of the night of 4-5 Oct. Reads are instead spaced at `rate` per second:
+    +`step` after each success, halved on a 429 (at most once per `cut_gap_s`, since parallel
+    threads see the same limit together), so the rate settles just under SIG's limit.
+    Orders and cancels never wait (they still use up budget) unless sent from a background
+    thread (see background()), as the market maker's are."""
+
+    def __init__(self, rate: float = 2.0, min_rate: float = 0.5, max_rate: float = 20.0, step: float = 0.02,
+                 cut_gap_s: float = 2.0, clock=time.monotonic, sleep=time.sleep):
+        self.rate, self.min_rate, self.max_rate, self.step, self.cut_gap_s = rate, min_rate, max_rate, step, cut_gap_s
+        self.clock, self.sleep = clock, sleep
+        self.next_at, self.last_cut = 0.0, -1e9
+        self.lock = threading.Lock()
+        self.stats = {"reads": 0, "orders": 0, "limited": 0, "waited_s": 0.0}
+
+    def wait(self, urgent: bool = False) -> float:
+        """Take the next slot; sleeps until it unless urgent. Returns the wait in seconds."""
+        with self.lock:
+            now = self.clock()
+            at = max(self.next_at, now)
+            self.next_at = at + 1.0 / self.rate
+            self.stats["orders" if urgent else "reads"] += 1
+            delay = 0.0 if urgent else at - now
+            self.stats["waited_s"] += delay
+        if delay > 0:
+            self.sleep(delay)
+        return delay
+
+    def ok(self) -> None:
+        with self.lock:
+            self.rate = min(self.max_rate, self.rate + self.step)
+
+    def limited(self, retry_after: float | None = None) -> None:
+        with self.lock:
+            now = self.clock()
+            self.stats["limited"] += 1
+            if now - self.last_cut >= self.cut_gap_s:
+                self.rate = max(self.min_rate, self.rate / 2)
+                self.last_cut = now
+            self.next_at = max(self.next_at, now + (retry_after or 1.0 / self.rate))
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {"rate": round(self.rate, 2), **{k: round(v, 1) for k, v in self.stats.items()}}
+
+
+_thread = threading.local()
+
+
+@contextlib.contextmanager
+def background():
+    """Requests sent inside this block queue behind reads, orders included (market making:
+    a quote can wait a second, an arb leg cannot)."""
+    prev = getattr(_thread, "background", False)
+    _thread.background = True
+    try:
+        yield
+    finally:
+        _thread.background = prev
+
+
+def _urgent() -> bool:
+    return not getattr(_thread, "background", False)
+
+
 def load_env(path: str | os.PathLike = None) -> None:
     """Minimal .env loader (no python-dotenv dependency)."""
     p = pathlib.Path(path or pathlib.Path(__file__).with_name(".env"))
@@ -70,6 +140,7 @@ class Client:
         self.cookie = cookie or os.environ.get("SIG_COOKIE", "")
         self.tournament = tournament or os.environ.get("SIG_TOURNAMENT", DEFAULT_TOURNAMENT)
         self.concurrency, self.timeout = concurrency, timeout
+        self.pacer = Pacer()
         self.s = requests.Session()
         self.s.headers.update({"Content-Type": "application/json", "User-Agent": "sig-arb/0.2"})
         if self.cookie:
@@ -139,22 +210,27 @@ class Client:
     def _get(self, path: str, _timeout: float | None = None, **params):
         # Reads are idempotent: retry once, since SIG's API sometimes stalls for 10s+.
         timeout = _timeout or self.timeout
+        self.pacer.wait()
         try:
             r = self.s.get(BASE + path, params=params, timeout=timeout)
         except (requests.Timeout, requests.ConnectionError):
+            self.pacer.wait()
             r = self.s.get(BASE + path, params=params, timeout=timeout)
         if r.status_code == 429:
             try:
                 retry_after = float(r.headers.get("Retry-After"))
             except (TypeError, ValueError):
                 retry_after = None
+            self.pacer.limited(retry_after)
             raise RateLimited(path, retry_after)
+        self.pacer.ok()
         if r.status_code in (401, 403):
             raise PermissionError(f"{path} -> {r.status_code}. Is SIG_COOKIE set / still valid?")
         r.raise_for_status()
         return r.json()
 
     def _post(self, path: str, body: dict):
+        self.pacer.wait(urgent=_urgent())
         r = self.s.post(BASE + path, data=json.dumps(body), timeout=self.timeout)
         try:
             data = r.json()
@@ -258,6 +334,7 @@ class Client:
             raise PermissionError("no Supabase access_token (set SIG_COOKIE with the sb-*-auth-token cookie)")
         if not self.profile_id:
             raise PermissionError("no profile id (set SIG_PROFILE_ID or a cookie with the Supabase user)")
+        self.pacer.wait(urgent=_urgent())
         try:
             r = self.s.post(BASE + "/api/trading/orders/place", data=json.dumps(body),
                             timeout=max(self.timeout, ORDER_TIMEOUT),
@@ -271,6 +348,8 @@ class Client:
         except ValueError:
             data = {"raw": r.text[:500]}
         data["_status"] = r.status_code
+        if r.status_code == 429:
+            self.pacer.limited()
         if r.status_code >= 500:
             data["_unknown"] = True          # outcome unknown: reconcile before retrying
         elif r.status_code in (401, 403):
@@ -311,6 +390,7 @@ class Client:
     def cancel(self, order_id: str, dry_run: bool = True):
         if dry_run or not order_id:
             return {"dryRun": True}
+        self.pacer.wait(urgent=_urgent())
         r = self.s.post(BASE + "/api/trading/orders/cancel", timeout=max(self.timeout, ORDER_TIMEOUT),
                         data=json.dumps({"orderId": order_id, "tournamentId": self.tournament}),
                         headers={"Authorization": f"Bearer {self.access_token}"})
