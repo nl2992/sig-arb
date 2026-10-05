@@ -191,7 +191,7 @@ class ClawTests(unittest.TestCase):
             self.assertEqual(bot.account_room(a, risk), 0)    # fv/cv entries get nothing new
             arb = mock.Mock(marginal_edge=0.02, legs=[1, 2], capital=500, pnl=20, race="R")
             a.min_edge, a.min_edge_3leg, a.max_per_race, a.cooldown = 0.015, 0.02, 2000, 0
-            self.assertEqual(risk.ok(arb), (False, "capital reserved for market making"))
+            self.assertEqual(risk.ok(arb), (True, ""))       # arbs are riskless: only the gross cap binds
 
 
 if __name__ == "__main__":

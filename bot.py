@@ -36,6 +36,7 @@ import uuid
 from typing import Optional
 
 from arb_engine import ArbResult, Book, breakeven_limit, group_markets, max_executable_arb
+import arb_exits
 import conviction
 import fair_value
 import fast_scan
@@ -218,11 +219,12 @@ def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: f
 
 
 def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: float = 0.005,
-                     fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None) -> dict:
+                     fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None,
+                     floor=None) -> dict:
     """Send every leg at once at its walk limit, so no leg waits on another's round trip.
     If exactly one leg comes back short, top it up once (chasing at most `chase_ticks`,
-    never past the break-even implied by the other legs' fills). Anything still uneven
-    is IMBALANCED / LEGGED and halts the bot as in execute()."""
+    never past the break-even implied by the other legs' fills, or past `floor(others)`
+    when given). Anything still uneven is IMBALANCED / LEGGED and halts the bot as in execute()."""
     from concurrent.futures import ThreadPoolExecutor
     run_id = run_id or uuid.uuid4().hex[:12]
     if kill_switch_engaged(kill_switch):
@@ -253,7 +255,8 @@ def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2
     if top > 0 and len(short) == 1 and not kill_switch_engaged(kill_switch):
         k = short[0]
         leg, need = plan[k], top - fills[k]
-        be = breakeven_limit(r.direction, [x["avg"] for j, x in enumerate(rep) if j != k], fee, len(plan))
+        others = [x["avg"] for j, x in enumerate(rep) if j != k]
+        be = floor(others) if floor else breakeven_limit(r.direction, others, fee, len(plan))
         c = chase_ticks * tick
         limit = (max(be, leg["limit"] - c) if leg["yes_side"] == "SELL" else min(be, leg["limit"] + c))
         extra = send(k, leg, limit, need, suffix="r")
@@ -326,9 +329,6 @@ class Risk:
             return False, "3-leg edge"
         if getattr(self.a, "max_per_race", None) and r.capital > self.a.max_per_race + 1e-9:
             return False, "per-race cap"
-        claw = getattr(self.a, "claw", None)
-        if claw is not None and r.capital > claw.room(self.gross):
-            return False, "capital reserved for market making"
         if self.gross + r.capital > self.a.max_gross:
             high_ev = r.capital > 0 and r.pnl / r.capital >= getattr(self.a, "reserve_min_roi", float("inf"))
             if not high_ev or self.gross + r.capital > self.a.max_gross + getattr(self.a, "reserve", 0.0):
@@ -363,7 +363,8 @@ def account_room(a, risk, high_ev: bool = False) -> float:
 
 
 class Claw:
-    """Capital freed when fv/cv/arb positions hit an exit rule moves to market making.
+    """Capital freed when fv/cv/arb positions hit an exit rule moves to market making. Only
+    fv/cv entries are held to it; arbs (riskless) may use freed capital up to the gross cap.
     The non-MM strategies' deployed capital is a ratchet: it can only fall (exits), never
     re-grow; what it gives up is added to the MM budget, up to `mm_max`. Persisted, so a
     restart keeps what was clawed back."""
@@ -518,6 +519,43 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
                 # or clears it from SIG's holdings at the next check (kill switch if unexplained).
                 log.warning("fv order on #%s has an unknown outcome; holdings check will reconcile", m["id"])
     return out
+
+
+def run_arb_exit(cli: Client, snap: Snapshot, race: str, arb_pos: dict, acct: dict, a, live: bool,
+                 risk=None) -> Optional[dict]:
+    """Unwind a race's complete arb sets before settlement when that is profitable and banks
+    at least --arb-exit-share of the settlement profit (arb_exits.py). Auto mode only."""
+    ids = list(group_markets(snap.markets).get(race, {}).values())
+    if not ids or any(m not in snap.levels for m in ids):
+        return None
+    if risk is not None and time.time() - risk.last_fire.get(("exit", race), 0) < a.cooldown:
+        return None
+    books = {m: Book.from_levels(m, snap.levels[m]) for m in ids}
+    plan = arb_exits.unwind_plan(race, ids, books, arb_pos, acct, min_share=a.arb_exit_share,
+                                 depth_ratio=a.arb_depth_ratio)
+    if not plan:
+        return None
+    if risk is not None:
+        risk.last_fire[("exit", race)] = time.time()
+    desc = (f"ARB EXIT {race}: sell {plan['sets']} sets x{plan['qty']:g}, profit {plan['profit']:.2f} "
+            f"(settlement {plan['settle_profit']:.2f}), frees {plan['cost']:.0f}")
+    if kill_switch_engaged() or a.mode != "auto":
+        log.info("not sending %s (%s)", desc, "kill switch" if kill_switch_engaged() else a.mode)
+        return None
+    r = arb_exits.as_result(plan)
+    with critical():
+        res = execute_parallel(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
+                               floor=arb_exits.repair_floor(plan))
+        res.update(unwind=True, settle_pnl=plan["settle_profit"], released=plan["cost"])
+        for leg in res.get("legs", []):
+            if live and leg.get("filled") and not leg.get("dryRun") and not leg.get("repair"):
+                acct[leg["market"]] = acct.get(leg["market"], 0.0) + (
+                    leg["filled"] if leg["side"] == "BUY" else -leg["filled"])
+        journal(r, res, a.mode, live)
+    if live and risk is not None and res.get("qty"):
+        risk.gross -= plan["cost"] * res["qty"] / plan["qty"]
+    log.info("%s -> %s", desc, json.dumps(res))
+    return res
 
 
 def journal_single(strategy: str, market_id: int, yes_side: str, qty: float, price: float, kind: str,
@@ -770,6 +808,10 @@ def main():
     ap.add_argument("--chase-ticks", type=int, default=2)
     ap.add_argument("--arb-depth-ratio", type=float, default=2.0,
                     help="arb legs need this multiple of our size resting at or better than the limit (0 = off)")
+    ap.add_argument("--arb-exit-share", type=float, default=0.5,
+                    help="unwind held arbs early once that banks this share of the settlement profit")
+    ap.add_argument("--no-arb-exits", dest="arb_exits", action="store_false",
+                    help="hold arbs to settlement")
     ap.add_argument("--near", type=int, default=0)
     ap.add_argument("--limits", type=pathlib.Path, default=RISK_LIMITS)
     ap.add_argument("--hot-band", type=float, default=0.005,
@@ -965,6 +1007,7 @@ def main():
         return f_
 
     cv_targets, cv_ranked_at = {}, 0.0
+    arb_pos = None                           # arb legs from the journal; reloaded after arb trades
     balance, balance_at = None, 0.0
     book_cache = {}
     live = False
@@ -1008,6 +1051,7 @@ def main():
                             if mm is not None:
                                 mm.max_capital = a.claw.mm_budget()
                         acct = holdings_check.actual_holdings(port)
+                        arb_pos = None
                         if exits is not None:          # book resting-exit fills before MM and reconciliation
                             for f_ in exits.sync(port, lambda: holdings_check.expected_holdings(checker.rows(), EXEC_LOG),
                                                  fetched_at):
@@ -1069,6 +1113,19 @@ def main():
                     # Arbs first: their profit is locked, and any other strategy trading first
                     # would consume the liquidity the arb's depth walk counted on (Nebraska, 1 Oct).
                     race_traded = False
+                    if "arb" in strategies and getattr(a, "arb_exits", False):
+                        if arb_pos is None:
+                            arb_pos = positions.arb_costs(EXEC_LOG)
+                        res = run_arb_exit(cli, snap, race, arb_pos, acct, a, live, risk)
+                        if res is not None:
+                            arb_pos = None
+                            counts["arb_exits"] = counts.get("arb_exits", 0) + 1
+                            last_exec = {"race": race, "status": res["status"], "live": live, "unwind": True}
+                            if live and res["status"] in HALT_STATUSES:
+                                engage_kill_switch(f"{res['status']} unwinding {race} (run {res.get('run_id')}): "
+                                                   f"{res.get('action') or 'operator review required'}")
+                                log.error("kill switch engaged after %s unwinding %s", res["status"], race)
+                            continue                 # books are stale now; entries wait for the next read
                     sigs, near, titles = (generate(snap, a, exhaustive, budget) if "arb" in strategies
                                           else ([], [], {}))
                     fresh = [s for s in sigs if sig_key(s) not in seen]
@@ -1110,6 +1167,7 @@ def main():
                             else:
                                 res = execute_parallel(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee)
                             risk.book(r, res)
+                            arb_pos = None
                             for leg in res.get("legs", []):
                                 if live and leg.get("filled") and not leg.get("dryRun") and not leg.get("repair"):
                                     acct[leg["market"]] = acct.get(leg["market"], 0.0) + (
