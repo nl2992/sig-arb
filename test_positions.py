@@ -70,5 +70,23 @@ class ArbCostTests(PositionsTests):
         self.assertAlmostEqual(rep["strategies"]["arb"]["ev"], 2 * 1041 - 1041 * (0.30 + 0.953 + 0.726), places=1)
 
 
+class OffsetMarketTests(unittest.TestCase):
+    def test_arb_leg_cancelled_by_a_fair_value_position_still_counts(self):
+        import tempfile, pathlib
+        import fair_value as fv
+        d = pathlib.Path(tempfile.mkdtemp())
+        led = fv.Ledger(d / "fv.json")
+        led.record(201, "BUY", 1253, 0.88)                     # fv long Dem YES
+        T = {201: "Will the Democratic Party win the CA-22 House race?",
+             202: "Will the Republican Party win the CA-22 House race?"}
+        port = {"cashBalance": 0, "holdings": [                  # #201 nets to zero: absent from holdings
+            {"marketId": 202, "title": T[202], "quantity": -1253, "averagePricePaid": 0.8676, "currentPrice": 0.13,
+             "settlementOption": "YES"}]}
+        arb = {201: [-1253.0, 1253 * 0.125], 202: [-1253.0, 1253 * 0.8676]}     # NO on both: a complete set
+        rep = positions.build(port, {"fv": led}, {201: 0.93, 202: 0.07}.get, arb_cost_fn=lambda: arb, titles=T)
+        self.assertGreater(rep["strategies"]["arb"]["ev"], 0)        # locked, not a lone -1,087 leg
+        self.assertAlmostEqual(rep["strategies"]["fv"]["ev"], 1253 * (0.93 - 0.88), places=2)
+
+
 if __name__ == "__main__":
     unittest.main()

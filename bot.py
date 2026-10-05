@@ -1076,7 +1076,8 @@ def main():
                         if not rep["ok"]:
                             log.warning("holdings check: %s", json.dumps(rep))
                         try:                           # dashboard positions & P&L, no extra SIG calls
-                            positions.write(positions.build(port, ledgers, fair_of))
+                            positions.write(positions.build(port, ledgers, fair_of,
+                                                            titles={mk['id']: mk['title'] for mk in markets}))
                         except Exception as e:
                             log.warning("positions report failed: %s", e)
                     except Exception as e:

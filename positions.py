@@ -65,7 +65,8 @@ def arb_costs(exec_log: pathlib.Path = None, manual_log: pathlib.Path = None) ->
 
 
 def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], Optional[float]],
-          arb_cost_fn: Optional[Callable[[], Dict[int, list]]] = None) -> dict:
+          arb_cost_fn: Optional[Callable[[], Dict[int, list]]] = None,
+          titles: Optional[Dict[int, str]] = None) -> dict:
     hold = {int(h["marketId"]): h for h in portfolio.get("holdings", [])
             if str(h.get("settlementOption", "YES")).upper() == "YES" and float(h.get("quantity") or 0)}
     cash = float(portfolio.get("cashBalance") or 0)
@@ -137,10 +138,18 @@ def build(portfolio: dict, ledgers: Dict[str, object], fair_fn: Callable[[int], 
         strat[k]["ev"] = 0.0
     arb_journal = (arb_cost_fn or arb_costs)()
     arb_by_race = collections.defaultdict(list)
-    for m, h in hold.items():
-        q_net, avg = float(h["quantity"]), float(h.get("averagePricePaid") or 0)
-        mt = TITLE_RE.match(h.get("title", ""))
-        party, race = (mt.group(1), mt.group(2)) if mt else ("?", h.get("title", ""))
+    # Also markets the account holds nothing in because strategies offset there (e.g. a fair-value
+    # YES cancelling an arb's NO leg): each strategy's own position still counts, and the arb set
+    # stays complete instead of showing as a lone leg.
+    titles = dict(titles or {})
+    titles.update({m: h.get("title", "") for m, h in hold.items()})
+    offset = {int(m) for led in ledgers.values() for m, r in led.rows.items() if r.get("qty")}
+    offset |= {int(m) for m, j in arb_journal.items() if abs(j[0]) > 0.5}
+    for m in sorted(set(hold) | {m for m in offset if m in titles}):
+        h = hold.get(m, {})
+        q_net, avg = float(h.get("quantity") or 0), float(h.get("averagePricePaid") or 0)
+        mt = TITLE_RE.match(titles.get(m, ""))
+        party, race = (mt.group(1), mt.group(2)) if mt else ("?", titles.get(m, ""))
         fair = fair_fn(m)
         price = fair if fair is not None else h.get("currentPrice")
         rest = q_net
