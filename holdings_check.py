@@ -107,6 +107,16 @@ def actual_holdings(portfolio: dict) -> Dict[int, float]:
     return dict(out)
 
 
+def account_avg(portfolio: dict) -> Dict[int, tuple]:
+    """market_id -> (signed YES qty, averagePricePaid in the held side's terms), as SIG computes
+    it from the account's own transaction history."""
+    out: Dict[int, tuple] = {}
+    for h in portfolio.get("holdings", []):
+        if str(h.get("settlementOption", "YES")).upper() == "YES" and h.get("quantity")                 and h.get("averagePricePaid") is not None:
+            out[int(h["marketId"])] = (float(h["quantity"]), float(h["averagePricePaid"]))
+    return out
+
+
 def deployed(portfolio: dict) -> float:
     return sum(abs(float(h.get("quantity") or 0)) * float(h.get("averagePricePaid") or 0)
                for h in portfolio.get("holdings", []))

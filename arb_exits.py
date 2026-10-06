@@ -29,6 +29,8 @@ def complete_sets(ids: List[int], arb: Dict[int, list], acct: Dict[int, float]) 
     sign = 1 if rows[0][0] > 0 else -1
     if any((r[0] > 0) != (sign > 0) for r in rows):
         return None
+    if any(r[1] != r[1] for r in rows):                  # NaN: a leg's cost is unknown
+        return None
     sets = min(abs(r[0]) for r in rows)
     sets = min([sets] + [max(0.0, acct.get(m, 0.0) * sign) for m in ids])
     return sign, float(int(sets)), sum(r[1] / abs(r[0]) for r in rows)

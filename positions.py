@@ -30,7 +30,8 @@ def _side_value(q: float, p_yes: float) -> float:
     return p_yes if q > 0 else 1 - p_yes
 
 
-def arb_costs(exec_log: pathlib.Path = None, manual_log: pathlib.Path = None) -> Dict[int, list]:
+def arb_costs(exec_log: pathlib.Path = None, manual_log: pathlib.Path = None,
+              account_avg: Dict[int, tuple] = None) -> Dict[int, list]:
     """Per market [signed YES qty, cost] of arb legs from the arb's own fills. The account's
     average price is for the NET side, which differs from an arb leg wherever another
     strategy holds the opposite side (e.g. Nebraska #281: net long YES, arb leg NO)."""
@@ -56,11 +57,28 @@ def arb_costs(exec_log: pathlib.Path = None, manual_log: pathlib.Path = None) ->
                 continue
             q = leg["filled"] if leg["side"] == "BUY" else -leg["filled"]
             add(leg["market"], q, float(leg.get("avg") or leg.get("limit")))
+    unpriced = set()
     for r in hc._rows(manual_log or hc.MANUAL_LOG):
         if r.get("action") == "journal_backfill":
+            if r.get("price_yes") is None:
+                unpriced.add(int(r["market_id"]))
             add(r["market_id"], float(r["qty"]), float(r.get("price_yes") or 0.5))
         elif r.get("action") == "close" and r.get("status") == "SENT":
             add(r["market_id"], float(r["after"]) - float(r["before"]), float(r.get("limit") or 0.5))
+    # A backfill without a price (positions adopted from another machine's records) has no
+    # known cost here: a 0.50 placeholder made 3-way No sets look ~0.45/set cheaper than they
+    # were, and arb exits sold them on that fake profit (6 Oct). Use SIG's own average price
+    # for the held side when the account holds the same side; otherwise the cost is unknown
+    # (NaN) and complete_sets() keeps the race out of early exits.
+    for m in unpriced:
+        row = out.get(m)
+        if not row or not row[0]:
+            continue
+        acct = (account_avg or {}).get(m)
+        if acct and (acct[0] > 0) == (row[0] > 0):
+            row[1] = abs(row[0]) * acct[1]
+        else:
+            row[1] = float("nan")
     return out
 
 

@@ -955,6 +955,7 @@ def main():
     checker = holdings_check.HoldingsCheck(ledgers, lambda why: engage_kill_switch(why, actor="holdings_check"),
                                            intent_log=INTENT_LOG, exec_log=EXEC_LOG)
     acct = {}                                # market_id -> signed YES holding (minute snapshot)
+    acct_avg = {}                            # market_id -> (qty, SIG average price paid)
     for attempt in range(1, 6):              # never trade before the sweep and the check succeed
         try:
             if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
@@ -964,6 +965,7 @@ def main():
                     time.sleep(2)
             port = cli.portfolio()
             acct = holdings_check.actual_holdings(port)
+            acct_avg = holdings_check.account_avg(port)
             rep = checker.check(port, cli.transactions, immediate=True)
             log.info("holdings check at start: %s", json.dumps(rep))
             break
@@ -1090,6 +1092,7 @@ def main():
                             room = a.max_gross - risk.gross
                             mm.max_capital = min(budget, mm_ledger.gross() + room) if room > 0 else 0.0
                         acct = holdings_check.actual_holdings(port)
+                        acct_avg = holdings_check.account_avg(port)
                         arb_pos = None
                         if exits is not None:          # book resting-exit fills before MM and reconciliation
                             for f_ in exits.sync(port, lambda: holdings_check.expected_holdings(checker.rows(), EXEC_LOG),
@@ -1138,7 +1141,7 @@ def main():
                         scanner.boost |= {r for r in map(scanner.race_of, cv_targets) if r}
                 if "arb" in strategies:              # held arb sets are read often, for early exits
                     if arb_pos is None:
-                        arb_pos = positions.arb_costs(EXEC_LOG)
+                        arb_pos = positions.arb_costs(EXEC_LOG, account_avg=acct_avg)
                     scanner.priority = {r for r, legs in scanner.groups.items()
                                         if arb_exits.complete_sets(list(legs.values()), arb_pos, acct)}
                 if nw is not None:
@@ -1160,7 +1163,7 @@ def main():
                     race_traded = False
                     if "arb" in strategies and getattr(a, "arb_exits", False):
                         if arb_pos is None:
-                            arb_pos = positions.arb_costs(EXEC_LOG)
+                            arb_pos = positions.arb_costs(EXEC_LOG, account_avg=acct_avg)
                         res = run_arb_exit(cli, snap, race, arb_pos, acct, a, live, risk)
                         if res is not None:
                             arb_pos = None
