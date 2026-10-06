@@ -70,6 +70,17 @@ def kill_switch_engaged(path: pathlib.Path = None) -> bool:
     return (path or KILL_SWITCH).exists()
 
 
+def replace_file(tmp: pathlib.Path, path: pathlib.Path, tries: int = 20) -> None:
+    """tmp.replace(path), retried: on Windows it fails while a reader (dashboard, status) has path open."""
+    for i in range(tries):
+        try:
+            return tmp.replace(path)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.05)
+
+
 def engage_kill_switch(reason: str, actor: str = "bot", path: pathlib.Path = None) -> None:
     """Create the kill switch atomically. Idempotent; never released from here."""
     path = path or KILL_SWITCH
@@ -78,7 +89,7 @@ def engage_kill_switch(reason: str, actor: str = "bot", path: pathlib.Path = Non
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(f"{reason}\nactor={actor} at={dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')}\n")
-    tmp.replace(path)
+    replace_file(tmp, path)
 
 
 # ----------------------------------------------------------- execution
@@ -389,7 +400,7 @@ class Claw:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"start": round(self.start, 2), "cap": round(self.cap, 2),
                                    "reclaimed": round(self.reclaimed(), 2), "mm_budget": round(self.mm_budget(), 2)}))
-        tmp.replace(self.path)
+        replace_file(tmp, self.path)
 
     def reclaimed(self) -> float:
         return max(0.0, (self.start or 0.0) - (self.cap or 0.0))
@@ -778,7 +789,7 @@ def write_books(path: pathlib.Path, cache: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
-    tmp.replace(path)
+    replace_file(tmp, path)
 
 
 def write_status(path: pathlib.Path, **fields):
@@ -786,7 +797,7 @@ def write_status(path: pathlib.Path, **fields):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps({"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                                "pid": os.getpid(), **fields}, default=str))
-    tmp.replace(path)
+    replace_file(tmp, path)
 
 
 # ---------------------------------------------------------------- main
@@ -897,6 +908,8 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     signal.signal(signal.SIGINT, _on_stop_signal)
     signal.signal(signal.SIGTERM, _on_stop_signal)
+    if hasattr(signal, "SIGBREAK"):          # Windows: the supervisor stops children with CTRL_BREAK
+        signal.signal(signal.SIGBREAK, _on_stop_signal)
 
     limits = gates.load_limits(a.limits)     # malformed limits -> refuse to start
     apply_limits(a, limits)
@@ -1277,6 +1290,8 @@ def main():
         # SIGINT/SIGTERM cannot cut this cleanup short (that left two quotes live on 1 Oct).
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if hasattr(signal, "SIGBREAK"):
+            signal.signal(signal.SIGBREAK, signal.SIG_IGN)
         if mm is not None:
             mm.stop_worker(60)                 # finish the order in flight, then stop
         if exits is not None:
@@ -1284,7 +1299,9 @@ def main():
         if nw is not None:
             nw.stop()
         try:
-            log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
+            # Same guard as the startup sweep: a dry run must never cancel real orders on the account.
+            if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
+                log.info("shutdown: cancelled %d resting order(s)", cancel_all_open_orders(cli))
         except Exception as e:
             log.error("shutdown: could not list resting orders (%s); cancelling known quotes", e)
             if mm is not None:                 # SIG would not list them: use the worker's last view

@@ -31,12 +31,17 @@ ROOT = pathlib.Path(__file__).parent
 LOGS = ROOT / "logs"
 PID_FILE = LOGS / "supervisor.pid"
 STATE_FILE = LOGS / "supervisor_state.json"
+# Windows has no SIGTERM between unrelated processes: `stop` drops this file instead.
+STOP_FILE = LOGS / "supervisor.stop"
 KILL_SWITCH = LOGS / "KILL_SWITCH"
 BOT_STATUS = LOGS / "bot_status.json"
 MIN_FREE_GB = 2.0
 LOG_MAX_BYTES = 50 * 1024 * 1024
 DEFAULT_BOT_ARGS = ["--mode", "auto", "--live", "--interval", "3", "--strategy", "arb,cv,fv,ll,mm"]
 DASHBOARD_ARGS = ["--port", "8876"]
+WINDOWS = os.name == "nt"
+# Each child gets its own process group so CTRL_BREAK reaches it alone (bot.py treats it as Ctrl+C).
+CHILD_FLAGS = subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0
 
 
 def notify(message: str, title: str = "SIG bot") -> None:
@@ -61,6 +66,17 @@ def free_gb(path: pathlib.Path = ROOT) -> float:
 def pid_alive(pid: int | None) -> bool:
     if not pid:
         return False
+    if WINDOWS:
+        # os.kill(pid, 0) on Windows is TerminateProcess, not a liveness probe.
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
+        k32.CloseHandle(handle)
+        return bool(ok) and code.value == 259               # STILL_ACTIVE
     try:
         os.kill(pid, 0)
         return True
@@ -78,7 +94,12 @@ def read_pid() -> int | None:
 
 def other_bots() -> list[int]:
     """bot.py processes not started by this supervisor (e.g. in a terminal tab)."""
-    out = subprocess.run(["pgrep", "-f", "python.*bot.py"], capture_output=True, text=True).stdout
+    if WINDOWS:
+        ps = ("Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+              "Where-Object { $_.CommandLine -match 'python.*bot\\.py' } | ForEach-Object { $_.ProcessId }")
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+    else:
+        out = subprocess.run(["pgrep", "-f", "python.*bot.py"], capture_output=True, text=True).stdout
     return [int(p) for p in out.split() if p.strip().isdigit() and int(p) != os.getpid()]
 
 
@@ -109,18 +130,21 @@ class Child:
         rotate(logf)
         out = logf.open("a")
         self.proc = subprocess.Popen([sys.executable, str(ROOT / f"{self.name}.py"), *self.args],
-                                     cwd=ROOT, stdout=out, stderr=subprocess.STDOUT,
+                                     cwd=ROOT, stdout=out, stderr=subprocess.STDOUT, creationflags=CHILD_FLAGS,
                                      env={**os.environ, "PYTHONUNBUFFERED": "1"})
         self.started_at = time.time()
         log(f"started {self.name} pid {self.proc.pid}: {' '.join(self.args)}")
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
-            self.proc.send_signal(signal.SIGINT)
+            self.proc.send_signal(signal.CTRL_BREAK_EVENT if WINDOWS else signal.SIGINT)
             try:
                 self.proc.wait(75)           # in-flight book reads + order cancels
             except subprocess.TimeoutExpired:
-                self.proc.terminate()
+                if WINDOWS:                  # the venv launcher's python child too, not just the launcher
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True)
+                else:
+                    self.proc.terminate()
 
 
 def run(bot_args: list[str]) -> None:
@@ -134,11 +158,16 @@ def run(bot_args: list[str]) -> None:
         stopping = True
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
+    if WINDOWS:
+        signal.signal(signal.SIGBREAK, on_signal)
+    STOP_FILE.unlink(missing_ok=True)
     seen_kill = KILL_SWITCH.exists()
     warned = {"stale": False, "token": False, "disk": False}
     log(f"supervisor started pid {os.getpid()}")
     try:
         while not stopping:
+            if STOP_FILE.exists():
+                break
             gb = free_gb()
             if gb < MIN_FREE_GB and not KILL_SWITCH.exists():
                 KILL_SWITCH.write_text(f"low disk: {gb:.1f} GB free\nactor=supervisor\n")
@@ -176,6 +205,7 @@ def run(bot_args: list[str]) -> None:
         for c in children:
             c.stop()
         PID_FILE.unlink(missing_ok=True)
+        STOP_FILE.unlink(missing_ok=True)
 
 
 def start(bot_args: list[str]) -> int:
@@ -191,7 +221,10 @@ def start(bot_args: list[str]) -> int:
     out = (LOGS / "supervisor.log").open("a")
     proc = subprocess.Popen([sys.executable, str(ROOT / "supervisor.py"), "run", *bot_args], cwd=ROOT,
                             stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            start_new_session=True, env={**os.environ, "PYTHONUNBUFFERED": "1"})
+                            start_new_session=not WINDOWS, env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                            # Windows: detached from this terminal, with a hidden console its children share.
+                            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+                            if WINDOWS else 0)
     for _ in range(20):
         if read_pid():
             break
@@ -206,7 +239,10 @@ def stop() -> int:
     if not pid:
         print("supervisor is not running")
         return 0
-    os.kill(pid, signal.SIGTERM)
+    if WINDOWS:
+        STOP_FILE.write_text("stop\n")
+    else:
+        os.kill(pid, signal.SIGTERM)
     for _ in range(480):
         if not pid_alive(pid):
             print("stopped bot, dashboard and supervisor")
