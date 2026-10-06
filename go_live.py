@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import pathlib
 import sys
 
@@ -253,7 +254,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="readiness checklist")
     c.add_argument("--offline", action="store_true", help="skip read-only SIG requests")
-    sub.add_parser("set-cookie", help="write the clipboard cookie to .env (macOS pbpaste)")
+    sub.add_parser("set-cookie", help="write the clipboard cookie to .env (macOS pbpaste, Windows Get-Clipboard)")
     st = sub.add_parser("start", help="readiness check, then run bot + dashboard under the supervisor")
     st.add_argument("--mode", choices=["auto", "confirm", "signal"], default="auto")
     st.add_argument("--strategy", default="arb,cv,fv,ll,mm")
@@ -317,7 +318,9 @@ def main(argv=None):
     if a.cmd == "set-cookie":
         import subprocess
         import time
-        paste = lambda: subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+        clip = (["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"] if os.name == "nt"
+                else ["pbpaste"])
+        paste = lambda: subprocess.run(clip, capture_output=True, text=True).stdout or ""
         if not sig_client.decode_supabase_cookie(paste().strip()).get("access_token"):
             print("Waiting for the cookie on the clipboard. In the signed-in sig.thesuper.market tab,\n"
                   "run  copy(document.cookie)  in the DevTools console. (Ctrl+C to cancel)", flush=True)

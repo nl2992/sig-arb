@@ -200,6 +200,30 @@ class Client:
         save_env_value("SIG_COOKIE", self.cookie, env_path or ENV_PATH)
         return self.token_seconds_left()
 
+    def reload_cookie(self, env_path: pathlib.Path = None) -> bool:
+        """Adopt a newer SIG_COOKIE written to .env by hand (or by another process) while running,
+        so a fresh login needs no restart. Only a token that outlives the current one is taken."""
+        if os.environ.get("SIG_ACCESS_TOKEN"):
+            return False
+        p = pathlib.Path(env_path or ENV_PATH)
+        try:
+            line = next((l for l in p.read_text().splitlines() if l.strip().startswith("SIG_COOKIE=")), "")
+        except OSError:
+            return False
+        cookie = line.split("=", 1)[1].strip().strip('"').strip("'") if line else ""
+        if not cookie or cookie == self.cookie:
+            return False
+        sess = decode_supabase_cookie(cookie)
+        exp_new = jwt_claims(sess.get("access_token") or "").get("exp")
+        exp_old = jwt_claims(self.access_token).get("exp") if self.access_token else None
+        if exp_new is None or (exp_old is not None and exp_new <= exp_old):
+            return False
+        self.cookie, self.session, self.access_token = cookie, sess, sess["access_token"]
+        self.profile_id = (sess.get("user") or {}).get("id") or self.profile_id
+        self.can_refresh = bool(sess.get("refresh_token"))
+        self.s.headers["Cookie"] = cookie
+        return True
+
     def token_seconds_left(self) -> float | None:
         """Seconds until the access token's JWT `exp`; None when absent or unreadable.
         Supabase tokens are short-lived (about an hour); a fresh cookie renews them."""

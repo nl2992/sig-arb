@@ -1031,6 +1031,8 @@ def main():
     try:
         while True:
             t0 = time.time()
+            if cli.reload_cookie():
+                log.info("SIG cookie reloaded from .env; token valid %.0f min", (cli.token_seconds_left() or 0) / 60)
             left = cli.token_seconds_left()
             if cli.can_refresh and left is not None and left < REFRESH_AHEAD_S:
                 try:
