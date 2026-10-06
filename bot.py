@@ -60,6 +60,7 @@ BOT_BOOKS = HERE / "logs" / "bot_books.json"
 RISK_LIMITS = HERE / "config" / "risk_limits.json"
 # Results that leave naked or unknown exposure; live mode stops on these.
 HALT_STATUSES = {"UNKNOWN", "LEGGED", "IMBALANCED"}
+ARB_CASH_MARGIN = 1.05          # free cash an arb needs over its cost, so a short leg's top-up can still fill
 # Live orders stop this long before the SIG access token expires.
 TOKEN_MARGIN_S = 300
 # The bot renews its own session this long before expiry (needs its own login; README).
@@ -1205,10 +1206,18 @@ def main():
                         if sized.qty < r.qty:
                             log.info("%s: size %g -> %g for %gx leg depth", r.race, r.qty, sized.qty, a.arb_depth_ratio)
                         r = sized
-                        if live and not a.budget and balance is not None and r.capital > balance:
-                            log.info("skip %s (needs %.0f, cash left %.0f)", r.race, r.capital, balance)
-                            counts["skipped"] += 1
-                            continue
+                        if live and not a.budget:
+                            # Other strategies spend cash between the minute balance reads, so re-read it:
+                            # an arb sized on cash fv had just used left Alaska Governor one-sided (6 Oct).
+                            try:
+                                fresh_cash = cli.balance()
+                                balance = balance if fresh_cash is None else fresh_cash
+                            except Exception as e:
+                                log.warning("balance read failed before %s: %s", r.race, e)
+                            if balance is not None and r.capital * ARB_CASH_MARGIN > balance:
+                                log.info("skip %s (needs %.0f + margin, cash %.0f)", r.race, r.capital, balance)
+                                counts["skipped"] += 1
+                                continue
                         if kill_switch_engaged():
                             log.warning("kill switch engaged; not executing %s", r.race)
                             counts["skipped"] += 1
