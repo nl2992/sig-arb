@@ -195,6 +195,10 @@ def leadlag_plan(book: Book, poly_mid: Optional[float], move: Optional[float], l
         return None
     if poly_mid is None or move is None or abs(move) < move_min:
         return None
+    # The stop is measured on the exit side of the book: with a spread at or above it, a new
+    # position is stopped out on the next pass (#382, 6 Oct: short at a 0.125 bid, 0.175 ask).
+    if not (book.bids and book.asks) or book.asks[0][0] - book.bids[0][0] >= stop:
+        return None
     budget = min(unit * abs(move) / move_min, max_market, gross_left)
     if budget <= 0:
         return None

@@ -33,7 +33,7 @@ import pathlib
 import signal
 import time
 import uuid
-from typing import Optional
+from typing import Dict, Optional
 
 from arb_engine import ArbResult, Book, breakeven_limit, group_markets, max_executable_arb
 import arb_exits
@@ -659,12 +659,20 @@ def run_conviction(cli: Client, snap: Snapshot, targets: dict, fair_of, ledger, 
     return out
 
 
+_ll_stopped: Dict[int, float] = {}          # market -> time of the last lead-lag stop-out
+
+
 def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=None, holdings: dict = None,
-                skip: set = frozenset(), touched: set = None) -> dict:
-    """Lead-lag scalps for one freshly read race: exits first, then entries on reference moves."""
+                skip: set = frozenset(), touched: set = None, arb_markets: frozenset = frozenset()) -> dict:
+    """Lead-lag scalps for one freshly read race: exits first, then entries on reference moves.
+    New entries skip markets an arb holds (SIG nets the scalp against the arb leg and un-hedges
+    the race) and markets stopped out within the last --ll-lookback seconds."""
     out = {"ll_signals": 0, "ll_orders": 0}
     for m in snap.markets:
         if m["id"] in skip:
+            continue
+        if not ledger.position(m["id"]) and (
+                m["id"] in arb_markets or time.time() - _ll_stopped.get(m["id"], 0.0) < a.ll_lookback):
             continue
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
         gross_left = min(a.ll_max_gross - ledger.gross(),
@@ -699,6 +707,8 @@ def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=N
             if live and fq > 0:
                 before = ledger.position(m["id"])
                 ledger.record(m["id"], plan["yes_side"], fq, plan["limit"])
+                if plan.get("exit") == "stop":
+                    _ll_stopped[m["id"]] = time.time()
                 if holdings is not None:
                     holdings[m["id"]] = holdings.get(m["id"], 0.0) + (fq if plan["yes_side"] == "BUY" else -fq)
                 if risk is not None:
@@ -716,11 +726,13 @@ def run_leadlag(cli: Client, snap: Snapshot, feed, ledger, a, live: bool, risk=N
 
 def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: dict, a,
                      skip: set = frozenset(), exits_markets: frozenset = frozenset(),
-                     news_held: frozenset = frozenset()) -> None:
+                     news_held: frozenset = frozenset(), arb_markets: frozenset = frozenset()) -> None:
     """Queue requotes for one freshly read race; the MM worker thread sends the orders."""
     for m in snap.markets:
         if m["id"] in skip or (m["id"] in exits_markets and m["id"] not in mm.active_snapshot):
             continue
+        if m["id"] in arb_markets and m["id"] not in mm.active_snapshot and not ledgers["mm"].position(m["id"]):
+            continue                         # a fill would net against the arb leg and un-hedge it
         book = Book.from_levels(m["id"], snap.levels[m["id"]])
         # MM keeps its own inventory books, so it may quote markets fair value holds; it stays
         # out of lead-lag and conviction markets, whose exits must not compete with quotes.
@@ -1242,6 +1254,10 @@ def main():
                     if race_traded:
                         continue
                     touched = set()
+                    if arb_pos is None:
+                        arb_pos = positions.arb_costs(EXEC_LOG, account_avg=acct_avg)
+                    # markets an arb holds: single-market entries there net against the arb leg
+                    arb_mkts = frozenset(mk for mk, row in arb_pos.items() if row[0])
                     mm_busy = set(mm.active_snapshot) if mm is not None else set()
                     exits_mkts = exits.markets_snapshot if exits is not None else frozenset()
                     if "cv" in strategies:
@@ -1251,12 +1267,12 @@ def main():
                     if "ll" in strategies:
                         for k, v in run_leadlag(cli, snap, feed, ll_ledger, a, live, risk, acct,
                                                 skip=mm_busy | exits_mkts | {int(k) for k, r in ledger.rows.items() if r.get("qty")},
-                                                touched=touched).items():
+                                                touched=touched, arb_markets=arb_mkts).items():
                             counts[k] = counts.get(k, 0) + v
                     if "fv" in strategies:
                         fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk, acct,
                                                    skip=touched, touched=touched,
-                                                   skip_entries=mm_busy | set(cv_targets), exits_claim=exits_claim,
+                                                   skip_entries=mm_busy | set(cv_targets) | arb_mkts, exits_claim=exits_claim,
                                                    news_ok=news_ok)
                         for k, v in fv_counts.items():
                             counts[k] = counts.get(k, 0) + v
@@ -1266,7 +1282,7 @@ def main():
                                                   if ledger.position(mk["id"]) or cv_ledger.position(mk["id"])}
                                                  if exits is not None else set())
                         run_market_maker(mm, snap, feed, refs, ledgers, acct, a, skip=touched,
-                                         exits_markets=frozenset(mm_avoid), news_held=news_held)
+                                         exits_markets=frozenset(mm_avoid), news_held=news_held, arb_markets=arb_mkts)
                     if exits is not None and live:
                         for mk in snap.markets:
                             m_ = mk["id"]
