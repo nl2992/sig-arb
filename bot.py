@@ -229,6 +229,12 @@ def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: f
     return {"status": "DONE", "qty": hedged, "legs": rep, "run_id": run_id}
 
 
+def capital_spent(res: dict) -> float:
+    """Cash an arb execution used: YES bought at avg, or NO bought (a YES SELL) at 1 - avg."""
+    return sum(x["filled"] * (x["avg"] if x["side"] == "BUY" else 1.0 - x["avg"])
+               for x in res.get("legs", []) if x.get("filled") and not x.get("dryRun"))
+
+
 def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: float = 0.005,
                      fee: float = 0.0, kill_switch: pathlib.Path = None, run_id: str = None,
                      floor=None) -> dict:
@@ -244,8 +250,17 @@ def execute_parallel(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2
 
     def send(k, leg, limit, qty, suffix=""):
         coid = f"{run_id}:{k}{suffix}"
-        resp = place_tracked(cli, "arb", leg["market_id"], leg["exchange_id"], leg["yes_side"], limit, qty,
-                             live, coid)
+        try:
+            resp = place_tracked(cli, "arb", leg["market_id"], leg["exchange_id"], leg["yes_side"], limit, qty,
+                                 live, coid)
+        except Exception as e:
+            # A rejected leg (e.g. 400 insufficient funds) placed nothing. Raising here lost the
+            # other legs' fills on 6 Oct (California Governor left one-sided, unjournaled); as a
+            # zero fill it goes through the top-up / IMBALANCED / LEGGED handling below.
+            log.error("leg %s on #%s rejected: %s", coid, leg["market_id"], e)
+            return {"market": leg["market_id"], "side": leg["yes_side"], "limit": round(limit, 4), "req": qty,
+                    "filled": 0.0, "avg": limit, "client_order_id": coid, "dryRun": False,
+                    "error": str(e)[:200], "_unknown": False}
         fq, fp, oids = _fill_of(resp, qty, limit)
         if fq < qty and not resp.get("_unknown"):
             for oid in oids:
@@ -1057,7 +1072,8 @@ def main():
                     last_universe = time.time()
                 if time.time() - balance_at > a.balance_every and not scanner.paused_for():
                     if not a.budget:
-                        balance = cli.balance() or balance
+                        fresh_balance = cli.balance()     # 0.0 is a real balance, not "unknown"
+                        balance = balance if fresh_balance is None else fresh_balance
                     # One account snapshot a minute: the exposure cap counts every open position
                     # (arb and fair value, including ones from earlier runs), fair-value orders
                     # read holdings from it, and holdings are reconciled against bot records.
@@ -1174,6 +1190,10 @@ def main():
                         if sized.qty < r.qty:
                             log.info("%s: size %g -> %g for %gx leg depth", r.race, r.qty, sized.qty, a.arb_depth_ratio)
                         r = sized
+                        if live and not a.budget and balance is not None and r.capital > balance:
+                            log.info("skip %s (needs %.0f, cash left %.0f)", r.race, r.capital, balance)
+                            counts["skipped"] += 1
+                            continue
                         if kill_switch_engaged():
                             log.warning("kill switch engaged; not executing %s", r.race)
                             counts["skipped"] += 1
@@ -1202,6 +1222,11 @@ def main():
                                     acct[leg["market"]] = acct.get(leg["market"], 0.0) + (
                                         leg["filled"] if leg["side"] == "BUY" else -leg["filled"])
                             journal(r, res, a.mode, live)
+                        if live and not a.budget and balance:
+                            # balance is read once a minute: spend it down here, or the next race this
+                            # pass is sized on cash already gone and SIG rejects one of its legs
+                            balance = max(0.0, balance - capital_spent(res))
+                            budget = balance or budget
                         counts["executed"] += 1
                         last_exec = {"race": r.race, "status": res["status"], "live": live,
                                      "book_age_s": round(time.time() - t0, 1)}
