@@ -1106,6 +1106,7 @@ def main():
     cv_targets, cv_ranked_at = {}, 0.0
     arb_pos = None                           # arb legs from the journal; reloaded after arb trades
     balance, balance_at = None, 0.0
+    paused_day = None                        # local date new entries are paused for (daily loss)
     book_cache = {}
     live = False
     try:
@@ -1154,6 +1155,17 @@ def main():
                             budget = a.claw.mm_budget() if getattr(a, "claw", None) is not None else a.mm_max_capital
                             room = a.max_gross - risk.gross
                             mm.max_capital = min(budget, mm_ledger.gross() + room) if room > 0 else 0.0
+                        # daily loss limit (config daily_loss): SIG's own day P&L; at the limit no new
+                        # entries in any strategy until the date changes, exits keep running
+                        day_pnl = (port.get("dailyPnL") or {}).get("value")
+                        today = dt.date.today().isoformat()
+                        if limits.get("daily_loss") and day_pnl is not None and day_pnl <= -limits["daily_loss"]:
+                            if paused_day != today:
+                                log.warning("daily loss limit: day P&L %.2f <= -%g; new entries paused until "
+                                            "tomorrow, exits continue", day_pnl, limits["daily_loss"])
+                            paused_day = today
+                        if paused_day == today and mm is not None:
+                            mm.max_capital = 0.0       # quotes only reduce inventory
                         acct = holdings_check.actual_holdings(port)
                         acct_avg = holdings_check.account_avg(port)
                         arb_pos = None
@@ -1245,8 +1257,12 @@ def main():
                     if fresh:
                         print(render(snap, fresh, near, titles, budget))
                         log_csv(snap, fresh)
+                    entries_paused = paused_day == dt.date.today().isoformat()
                     for r in fresh:
                         if a.mode == "signal":
+                            continue
+                        if entries_paused:
+                            counts["skipped"] += 1
                             continue
                         sized = depth_limited(r, snap, a, budget, a.arb_depth_ratio)
                         if sized is None:
@@ -1332,12 +1348,16 @@ def main():
                     if "ll" in strategies:
                         for k, v in run_leadlag(cli, snap, feed, ll_ledger, a, live, risk, acct,
                                                 skip=mm_busy | exits_mkts | {int(k) for k, r in ledger.rows.items() if r.get("qty")},
-                                                touched=touched, arb_markets=arb_mkts).items():
+                                                touched=touched,
+                                                arb_markets=arb_mkts | ({x["id"] for x in snap.markets}
+                                                                        if entries_paused else frozenset())).items():
                             counts[k] = counts.get(k, 0) + v
                     if "fv" in strategies:
                         fv_counts = run_fair_value(cli, snap, refs, ledger, a, live, risk, acct,
                                                    skip=touched, touched=touched,
-                                                   skip_entries=mm_busy | set(cv_targets) | arb_mkts, exits_claim=exits_claim,
+                                                   skip_entries=mm_busy | set(cv_targets) | arb_mkts
+                                                   | ({x["id"] for x in snap.markets} if entries_paused else set()),
+                                                   exits_claim=exits_claim,
                                                    news_ok=news_ok)
                         for k, v in fv_counts.items():
                             counts[k] = counts.get(k, 0) + v
@@ -1370,7 +1390,7 @@ def main():
             except Exception as e:
                 error = str(e)[:300]
                 log.exception("tick failed: %s", e)
-            write_status(BOT_STATUS, mode=a.mode, live_requested=a.live, live=live,
+            write_status(BOT_STATUS, mode=a.mode, live_requested=a.live, live=live, entries_paused_day=paused_day,
                          live_blockers=blockers, kill_switch=kill_switch_engaged(),
                          payload_confirmed=sig_client.PLACE_PAYLOAD_CONFIRMED,
                          interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
