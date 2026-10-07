@@ -163,6 +163,7 @@ def run(bot_args: list[str]) -> None:
     STOP_FILE.unlink(missing_ok=True)
     seen_kill = KILL_SWITCH.exists()
     warned = {"stale": False, "token": False, "disk": False}
+    backed_up = 0.0                         # hourly state backup outside the repo (state_backup.py)
     log(f"supervisor started pid {os.getpid()}")
     try:
         while not stopping:
@@ -176,6 +177,13 @@ def run(bot_args: list[str]) -> None:
                     warned["disk"] = True
             for c in children:
                 c.ensure()
+            if time.time() - backed_up > 3600:
+                try:
+                    import state_backup
+                    log(f"state backup: {state_backup.backup()}")
+                except Exception as e:
+                    log(f"state backup failed: {e}")
+                backed_up = time.time()
             engaged = KILL_SWITCH.exists()
             if engaged and not seen_kill:
                 reason = KILL_SWITCH.read_text().splitlines()[0][:150] if KILL_SWITCH.exists() else ""
