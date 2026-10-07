@@ -121,6 +121,24 @@ def _fill_of(resp: dict, default_qty: float, default_px: float):
             [o for o in oids if o])
 
 
+def pull_own_orders(cli: Client, r: ArbResult) -> int:
+    """Cancel the bot's own resting orders (MM quotes, resting exits) on an arb's legs. SIG's
+    book shows them as liquidity the arb cannot trade against: on 7 Oct a U.S. Senate leg sized
+    on our own 0.34 MM bid filled nothing and left the race LEGGED. Returns orders cancelled."""
+    n = 0
+    for l in r.legs:
+        for o in cli.my_orders(l.market_id):
+            oid = o.get("id") or o.get("orderId")
+            if not oid:
+                continue
+            try:
+                cli.cancel(oid, dry_run=False)
+                n += 1
+            except Exception as e:
+                log.warning("could not cancel own order %s on #%s: %s", oid, l.market_id, e)
+    return n
+
+
 def leg_cover(r: ArbResult, snap) -> float:
     """Thinnest leg's depth at or better than its limit, in multiples of the arb's size."""
     covers = []
@@ -1285,6 +1303,18 @@ def main():
                                 log.info("skip %s (needs %.0f + margin, cash %.0f)", r.race, r.capital, balance)
                                 if r.capital > 0:
                                     _cash_blocked.append((time.time(), r.pnl / r.capital))
+                                counts["skipped"] += 1
+                                continue
+                        if live:
+                            try:
+                                pulled = pull_own_orders(cli, r)
+                            except Exception as e:
+                                log.warning("own-order check failed on %s: %s; skipping this pass", r.race, e)
+                                counts["skipped"] += 1
+                                continue
+                            if pulled:
+                                log.info("%s: pulled %d own resting order(s) from its legs; arb waits for a "
+                                         "book without them", r.race, pulled)
                                 counts["skipped"] += 1
                                 continue
                         if kill_switch_engaged():
