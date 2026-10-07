@@ -121,6 +121,22 @@ def _fill_of(resp: dict, default_qty: float, default_px: float):
             [o for o in oids if o])
 
 
+def leg_cover(r: ArbResult, snap) -> float:
+    """Thinnest leg's depth at or better than its limit, in multiples of the arb's size."""
+    covers = []
+    for l in r.legs:
+        levels = snap.levels.get(l.market_id) if snap is not None else None
+        if not levels:
+            return 0.0
+        book = Book.from_levels(l.market_id, levels)
+        if r.direction == "SELL_ALL":
+            depth = sum(q for p, q in book.bids if p >= l.limit - 1e-9)
+        else:
+            depth = sum(q for p, q in book.asks if p <= l.limit + 1e-9)
+        covers.append(depth / r.qty if r.qty else 0.0)
+    return min(covers) if covers else 0.0
+
+
 def leg_plan(r: ArbResult) -> list:
     """Legs in send order (thinnest first) with YES-terms side, limit and quantity."""
     yes_side = "SELL" if r.direction == "SELL_ALL" else "BUY"
@@ -220,8 +236,17 @@ def execute(cli: Client, r: ArbResult, live: bool, chase_ticks: int = 2, tick: f
                 rep.append({"market": leg["market_id"], "error": f"quote: {e}"})
                 return {"status": "ABORT" if k == 0 else "LEGGED", "legs": rep, "run_id": run_id}
         coid = f"{run_id}:{k}"
-        resp = place_tracked(cli, "arb", leg["market_id"], leg["exchange_id"], yes_side, limit, target,
-                             live, coid)
+        try:
+            resp = place_tracked(cli, "arb", leg["market_id"], leg["exchange_id"], yes_side, limit, target,
+                                 live, coid)
+        except Exception as e:
+            # a rejected leg placed nothing; raising would lose the earlier legs' fills
+            log.error("leg %s on #%s rejected: %s", coid, leg["market_id"], e)
+            rep.append({"market": leg["market_id"], "side": yes_side, "limit": round(limit, 4), "req": target,
+                        "filled": 0.0, "avg": limit, "client_order_id": coid, "dryRun": False,
+                        "error": str(e)[:200]})
+            return {"status": "LEGGED" if k else "MISS", "legs": rep, "run_id": run_id,
+                    "action": "manually flatten earlier legs" if k else None}
         fq, fp, oids = _fill_of(resp, target, limit)
         rep.append({"market": leg["market_id"], "side": yes_side, "limit": round(limit, 4),
                     "req": target, "filled": fq, "avg": fp, "client_order_id": coid,
@@ -878,6 +903,8 @@ def main():
                     help="parallel book requests (SIG returns 429 above its limit)")
     ap.add_argument("--refresh-universe", type=float, default=1800, help="sec between market-list refreshes")
     ap.add_argument("--pre-quote", action="store_true", help="call the quote endpoint before each leg (slower)")
+    ap.add_argument("--parallel-min-cover", type=float, default=4.0,
+                    help="send legs in parallel only when every leg's book holds this many times the size")
     ap.add_argument("--sequential", action="store_true",
                     help="send legs one after another (thinnest first) instead of all at once")
     ap.add_argument("--balance-every", type=float, default=60, help="sec between balance refreshes")
@@ -1259,7 +1286,11 @@ def main():
                                 continue
                         race_traded = True
                         with critical():
-                            if a.sequential:
+                            cover = leg_cover(r, snap)
+                            if a.sequential or cover < a.parallel_min_cover:
+                                # thin book: thinnest leg first, later legs sized to its fill, so a
+                                # short fill cannot leave a residual (Alaska Governor, 6 Oct)
+                                log.info("%s: sequential (thinnest leg covers %.1fx)", r.race, cover)
                                 res = execute(cli, r, live=live, chase_ticks=a.chase_ticks, fee=a.fee,
                                               pre_quote=a.pre_quote)
                             else:
