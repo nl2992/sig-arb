@@ -50,9 +50,13 @@ def _walk(levels, qty: float) -> Optional[tuple]:
 
 def unwind_plan(race: str, ids: List[int], books: Dict[int, Book], arb: Dict[int, list],
                 acct: Dict[int, float], *, min_share: float = 0.5, depth_ratio: float = 2.0,
-                min_sets: int = 10) -> Optional[dict]:
+                min_sets: int = 10, redeploy_edge: Optional[float] = None) -> Optional[dict]:
     """The largest unwind of a race's complete sets in which every set is profitable on its
-    cost and banks at least `min_share` of its settlement profit, or None."""
+    cost and either banks at least `min_share` of its settlement profit, or (with
+    `redeploy_edge`: the return of arbs currently blocked for cash) leaves less to earn by
+    holding to settlement than the freed cash earns redeployed: (settle - proceeds) /
+    proceeds <= redeploy_edge. Both pay at the same settlement, so the comparison needs no
+    time horizon."""
     held = complete_sets(ids, arb, acct)
     if not held or held[1] < min_sets:
         return None
@@ -70,8 +74,15 @@ def unwind_plan(race: str, ids: List[int], books: Dict[int, Book], arb: Dict[int
         value = n - s if sign < 0 else s                 # per set
         # the last set must pass on its own: one that loses on cost is worth more held
         worst = sum(x[1] for x in w.values())
-        last = (n - worst if sign < 0 else worst) - cost
-        return (value, w) if last > 1e-9 and last >= floor - 1e-9 else None
+        proceeds = n - worst if sign < 0 else worst
+        last = proceeds - cost
+        if last <= 1e-9:
+            return None
+        if last >= floor - 1e-9:
+            return value, w, "share"
+        if redeploy_edge is not None and proceeds > 0 and (settle - proceeds) / proceeds <= redeploy_edge:
+            return value, w, "redeploy"
+        return None
 
     if not check(min_sets):
         return None
@@ -81,7 +92,7 @@ def unwind_plan(race: str, ids: List[int], books: Dict[int, Book], arb: Dict[int
         lo, hi = (mid, hi) if check(mid) else (lo, mid - 1)
     k = lo
     for _ in range(6):
-        value, w = check(k)
+        value, w, _why = check(k)
         cap = min(sum(q for p, q in ladders[m] if (p <= w[m][1] + 1e-9 if sign < 0 else p >= w[m][1] - 1e-9))
                   for m in ids) / depth_ratio
         if k <= cap + 1e-9:
@@ -91,8 +102,8 @@ def unwind_plan(race: str, ids: List[int], books: Dict[int, Book], arb: Dict[int
             return None
     else:
         return None
-    value, w = check(k)
-    return {"race": race, "sets": "NO" if sign < 0 else "YES", "qty": float(k),
+    value, w, why = check(k)
+    return {"race": race, "reason": why, "sets": "NO" if sign < 0 else "YES", "qty": float(k),
             "yes_side": "BUY" if sign < 0 else "SELL", "n": n,
             "legs": [{"market_id": m, "exchange_id": books[m].exchange_id, "limit": w[m][1], "vwap": w[m][0]}
                      for m in ids],

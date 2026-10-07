@@ -61,6 +61,21 @@ RISK_LIMITS = HERE / "config" / "risk_limits.json"
 # Results that leave naked or unknown exposure; live mode stops on these.
 HALT_STATUSES = {"UNKNOWN", "LEGGED", "IMBALANCED"}
 ARB_CASH_MARGIN = 1.05          # free cash an arb needs over its cost, so a short leg's top-up can still fill
+REDEPLOY_WINDOW_S = 600         # arbs skipped for cash this recently count as waiting for capital
+REDEPLOY_HAIRCUT = 0.8          # an exit to redeploy must beat holding by this margin (fills move)
+_cash_blocked: list = []        # (time, settlement return) of arbs skipped for lack of cash
+
+
+def redeploy_edge(now: float = None) -> Optional[float]:
+    """Return a freed dollar would earn in arbs now waiting for cash (median of those skipped
+    within REDEPLOY_WINDOW_S, haircut), or None when nothing is waiting: then holding to
+    settlement is free and only --arb-exit-share applies."""
+    now = now or time.time()
+    _cash_blocked[:] = [x for x in _cash_blocked if now - x[0] <= REDEPLOY_WINDOW_S]
+    if not _cash_blocked:
+        return None
+    rois = sorted(x[1] for x in _cash_blocked)
+    return REDEPLOY_HAIRCUT * rois[len(rois) // 2]
 # Live orders stop this long before the SIG access token expires.
 TOKEN_MARGIN_S = 300
 # The bot renews its own session this long before expiry (needs its own login; README).
@@ -559,13 +574,13 @@ def run_arb_exit(cli: Client, snap: Snapshot, race: str, arb_pos: dict, acct: di
         return None
     books = {m: Book.from_levels(m, snap.levels[m]) for m in ids}
     plan = arb_exits.unwind_plan(race, ids, books, arb_pos, acct, min_share=a.arb_exit_share,
-                                 depth_ratio=a.arb_depth_ratio)
+                                 depth_ratio=a.arb_depth_ratio, redeploy_edge=redeploy_edge())
     if not plan:
         return None
     if risk is not None:
         risk.last_fire[("exit", race)] = time.time()
     desc = (f"ARB EXIT {race}: sell {plan['sets']} sets x{plan['qty']:g}, profit {plan['profit']:.2f} "
-            f"(settlement {plan['settle_profit']:.2f}), frees {plan['cost']:.0f}")
+            f"(settlement {plan['settle_profit']:.2f}), frees {plan['cost']:.0f} [{plan.get('reason')}]")
     if kill_switch_engaged() or a.mode != "auto":
         log.info("not sending %s (%s)", desc, "kill switch" if kill_switch_engaged() else a.mode)
         return None
@@ -1216,6 +1231,8 @@ def main():
                                 log.warning("balance read failed before %s: %s", r.race, e)
                             if balance is not None and r.capital * ARB_CASH_MARGIN > balance:
                                 log.info("skip %s (needs %.0f + margin, cash %.0f)", r.race, r.capital, balance)
+                                if r.capital > 0:
+                                    _cash_blocked.append((time.time(), r.pnl / r.capital))
                                 counts["skipped"] += 1
                                 continue
                         if kill_switch_engaged():
