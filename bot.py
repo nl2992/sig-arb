@@ -67,6 +67,61 @@ _cash_blocked: list = []        # (time, settlement return) of arbs skipped for 
 
 
 DAY_BASE = pathlib.Path(__file__).parent / "logs" / "day_pnl_base.json"
+RESTING_OWNERS = pathlib.Path(__file__).parent / "logs" / "resting_owners.json"
+
+
+def write_resting_owners(port: dict, exits=None, path: pathlib.Path = None) -> None:
+    """Which strategy owns each market's resting orders (resting exits: their strategy; any
+    other resting order is an MM quote), so fills made while the bot is down can be booked."""
+    owners = {}
+    orders = getattr(exits, "orders", {}) if exits is not None else {}
+    for o in port.get("openOrders", []):
+        try:
+            m = int(o["marketId"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        owners[str(m)] = (orders.get(m) or {}).get("strategy") or "mm"
+    (path or RESTING_OWNERS).write_text(json.dumps({"ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+                                                    "owners": owners}))
+
+
+def _yes_fill(x: dict) -> tuple:
+    """(signed YES quantity, YES price) of one SIG trade row (quantity +YES / -NO, price in
+    the traded side's terms, orderType BUY opens that side)."""
+    q, p = float(x["quantity"]), float(x["price"])
+    signed = q if x.get("orderType") == "BUY" else -q
+    return signed, (p if q > 0 else 1 - p)
+
+
+def recover_downtime_fills(port: dict, transactions: list, ledgers: dict, expected: dict,
+                           owners_path: pathlib.Path = None) -> list:
+    """Book fills of resting orders made while the bot was not running (killed by Windows on
+    7 Oct: 7 resting fv/mm orders filled over 7 hours and the restart halted on a holdings
+    difference). A market is booked only when its owner is known from the last minute's
+    resting_owners.json and SIG's trades since then explain its difference exactly."""
+    try:
+        snap = json.loads((owners_path or RESTING_OWNERS).read_text())
+        since = dt.datetime.fromisoformat(snap["ts"])
+    except (OSError, ValueError, KeyError):
+        return []
+    owners = {int(k): v for k, v in snap.get("owners", {}).items()}
+    diff = holdings_check.diffs(holdings_check.actual_holdings(port), expected)
+    out = []
+    for m, d in diff.items():
+        strat = owners.get(m)
+        if strat not in ledgers:
+            continue
+        for back in (0, 60, 120):          # the snapshot is up to a minute behind the last fills
+            t0 = since - dt.timedelta(seconds=back)
+            fills = [x for x in transactions if x.get("event_type") == "trade" and int(x.get("marketId", -1)) == m
+                     and dt.datetime.fromisoformat(x["createdAt"].replace("Z", "+00:00")) >= t0]
+            if fills and abs(sum(_yes_fill(x)[0] for x in fills) - d) <= holdings_check.TOLERANCE:
+                for x in sorted(fills, key=lambda x: x["createdAt"]):
+                    signed, px = _yes_fill(x)
+                    ledgers[strat].record(m, "BUY" if signed > 0 else "SELL", abs(signed), px)
+                out.append({"market_id": m, "strategy": strat, "qty": d, "fills": len(fills)})
+                break
+    return out
 MTM_LOSS_MULT = 3.0             # SIG's mark-to-market day P&L only pauses entries at this x daily_loss
 
 
@@ -1061,6 +1116,14 @@ def main():
                                            intent_log=INTENT_LOG, exec_log=EXEC_LOG)
     acct = {}                                # market_id -> signed YES holding (minute snapshot)
     acct_avg = {}                            # market_id -> (qty, SIG average price paid)
+    if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
+        try:
+            for x in recover_downtime_fills(cli.portfolio(), cli.transactions(limit=1000), ledgers,
+                                            holdings_check.expected_holdings(checker.rows(), EXEC_LOG)):
+                log.warning("startup: booked %g on #%s from %d fill(s) of a resting %s order made while the "
+                            "bot was down", x["qty"], x["market_id"], x["fills"], x["strategy"])
+        except Exception as e:
+            log.warning("startup: downtime fill recovery failed: %s", e)
     for attempt in range(1, 6):              # never trade before the sweep and the check succeed
         try:
             if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
@@ -1231,6 +1294,10 @@ def main():
                             rep = checker.check(port, cli.transactions)
                         if not rep["ok"]:
                             log.warning("holdings check: %s", json.dumps(rep))
+                        try:
+                            write_resting_owners(port, exits)
+                        except Exception as e:
+                            log.warning("resting owners not saved: %s", e)
                         try:                           # dashboard positions & P&L, no extra SIG calls
                             positions.write(positions.build(port, ledgers, fair_of,
                                                             titles={mk['id']: mk['title'] for mk in markets}))
@@ -1484,6 +1551,13 @@ def main():
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if hasattr(signal, "SIGBREAK"):
             signal.signal(signal.SIGBREAK, signal.SIG_IGN)
+        if a.live and sig_client.PLACE_PAYLOAD_CONFIRMED:
+            # first pass before the workers wind down: Windows gives a closing console seconds,
+            # not the minute the workers may take, and leftover quotes filled for 7 h on 7 Oct
+            try:
+                log.info("shutdown: cancelled %d resting order(s) (first pass)", cancel_all_open_orders(cli))
+            except Exception as e:
+                log.warning("shutdown: first-pass cancel failed: %s", e)
         if mm is not None:
             mm.stop_worker(60)                 # finish the order in flight, then stop
         if exits is not None:
