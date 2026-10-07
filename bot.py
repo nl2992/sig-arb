@@ -957,15 +957,23 @@ def write_books(path: pathlib.Path, cache: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
-    replace_file(tmp, path)
+    try:
+        replace_file(tmp, path)
+    except OSError as e:                       # a dashboard cache: skip this tick, never crash
+        log.warning("book cache not written this tick: %s", e)
 
 
 def write_status(path: pathlib.Path, **fields):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-                               "pid": os.getpid(), **fields}, default=str))
-    replace_file(tmp, path)
+    """Heartbeat for the dashboard and supervisor. Never fatal: on 7 Oct a reader holding
+    bot_status.json open past replace_file's retries crashed the bot mid-session."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                                   "pid": os.getpid(), **fields}, default=str))
+        replace_file(tmp, path)
+    except OSError as e:
+        log.warning("status not written this tick: %s", e)
 
 
 # ---------------------------------------------------------------- main
