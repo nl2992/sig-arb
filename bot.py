@@ -487,7 +487,10 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
                                           gross_left=room, unit=getattr(a, "fv_unit", None),
                                           tp=getattr(a, "fv_tp", None), stop=getattr(a, "fv_stop", None),
                                           max_slip=getattr(a, "fv_max_slip", 0.03),
-                                          max_hold_s=getattr(a, "fv_max_hold", 0) or None)
+                                          max_hold_s=getattr(a, "fv_max_hold", 0) or None,
+                                          min_sources=getattr(a, "fv_min_sources", 1),
+                                          kelly_bankroll=getattr(a, "fv_kelly_bankroll", None),
+                                          kelly_fraction=getattr(a, "fv_kelly_fraction", 0.25))
         plan = reserve_plan(replan(gross_left), replan, a, gross_left,
                             min(race_left, account_room(a, risk, high_ev=True)))
         if not plan:
@@ -880,11 +883,11 @@ def main():
     ap.add_argument("--balance-every", type=float, default=60, help="sec between balance refreshes")
     ap.add_argument("--strategy", default="arb",
                     help="comma list: arb (complete-set arbs), fv (trade toward Kalshi/Polymarket fair value)")
-    ap.add_argument("--fv-threshold", type=float, default=0.03, help="fv: enter when SIG is this far past fair")
+    ap.add_argument("--fv-threshold", type=float, default=0.05, help="fv: enter when SIG is this far past fair")
     ap.add_argument("--fv-exit", type=float, default=0.01, help="fv: close once SIG is within this of fair")
     ap.add_argument("--fv-unit", type=float, default=500,
                     help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
-    ap.add_argument("--fv-max-market", type=float, default=2000, help="fv: capital cap per market")
+    ap.add_argument("--fv-max-market", type=float, default=1000, help="fv: capital cap per market")
     ap.add_argument("--fv-max-gross", type=float, default=45000,
                     help="fv: cap on fair-value capital (leaves room for ll/mm under the venue cap)")
     ap.add_argument("--fv-tp", type=float, default=0.01, help="fv: take profit vs entry")
@@ -894,7 +897,12 @@ def main():
     ap.add_argument("--fv-stop", type=float, default=0.05,
                     help="fv: exit if the reference fair moves this far against the entry")
     ap.add_argument("--fv-max-slip", type=float, default=0.03, help="fv: stop/time exits only within this of fair")
-    ap.add_argument("--fv-max-hold", type=float, default=0, help="fv: time stop in sec (0 = hold to settlement)")
+    ap.add_argument("--fv-min-sources", type=int, default=2,
+                    help="fv: new entries only when this many reference venues quote and agree")
+    ap.add_argument("--fv-kelly-bankroll", type=float, default=100000,
+                    help="fv: bankroll for fractional-Kelly entry sizing (0 = off)")
+    ap.add_argument("--fv-kelly-fraction", type=float, default=0.25, help="fv: Kelly fraction")
+    ap.add_argument("--fv-max-hold", type=float, default=259200, help="fv: time stop in sec (0 = hold to settlement)")
     ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     ap.add_argument("--poly-poll", type=float, default=3.0, help="ll/mm: sec between Polymarket book polls")
     ap.add_argument("--ll-move", type=float, default=0.02, help="ll: Polymarket mid move that triggers")

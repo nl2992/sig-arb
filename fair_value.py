@@ -266,7 +266,8 @@ def touch_edge(book: Book, fair: float) -> float:
 def plan_market(book: Book, fair: Optional[dict], ledger: Ledger, *, threshold: float, exit_band: float,
                 max_per_market: float, gross_left: float, unit: Optional[float] = None,
                 tp: Optional[float] = None, stop: Optional[float] = None, max_slip: float = 0.03,
-                max_hold_s: Optional[float] = None) -> Optional[dict]:
+                max_hold_s: Optional[float] = None, min_sources: int = 1,
+                kelly_bankroll: Optional[float] = None, kelly_fraction: float = 0.25) -> Optional[dict]:
     """Exit first, else entry; None when nothing to do. With `unit`, entry capital scales
     with the gap: unit x (edge at the touch / threshold), so a large move on Kalshi or
     Polymarket that SIG has not followed earns a proportionally large position."""
@@ -282,8 +283,35 @@ def plan_market(book: Book, fair: Optional[dict], ledger: Ledger, *, threshold: 
     room = min(max_per_market - ledger.capital(book.market_id), gross_left)
     if unit:
         room = min(room, unit * max(0.0, touch_edge(book, f)) / threshold)
+    if min_sources > 1 and len(fair.get("sources") or []) < min_sources:
+        return None                      # entries need every required venue quoting and agreeing
     sig = entry_signal(book, f, threshold, room)
     # never add against an existing fair-value position; exits handle that side
     if sig and pos and (pos > 0) != (sig["yes_side"] == "BUY"):
         return None
+    if sig and kelly_bankroll:
+        sig = kelly_cap(book, sig, f, kelly_bankroll, kelly_fraction)
+    return sig
+
+
+def kelly_cap(book: Book, sig: dict, fair: float, bankroll: float, fraction: float,
+              min_qty: float = 10) -> Optional[dict]:
+    """Cap an entry at fractional Kelly for a binary paying 1, with `fair` as the win
+    probability: a 5c edge on a 50c contract is a much smaller bet than on a 90c one."""
+    import kelly
+    if sig["yes_side"] == "BUY":
+        ladder = [(p, q) for p, q in book.asks if p <= sig["limit"] + 1e-9]
+        prob = fair
+    else:                                # buying No at 1 - bid
+        ladder = [(round(1 - p, 6), q) for p, q in book.bids if p >= sig["limit"] - 1e-9]
+        prob = 1 - fair
+    if not ladder or not 0 < prob < 1:
+        return None
+    k = kelly.size_position(ladder, prob, bankroll, fraction=fraction)
+    qty = float(int(min(sig["qty"], k["qty"])))
+    if qty < min_qty:
+        return None
+    if qty < sig["qty"]:
+        sig = {**sig, "qty": qty, "capital": round(sig["capital"] * qty / sig["qty"], 2),
+               "expected_pnl": round(sig["edge"] * qty, 2), "kelly_capped": True}
     return sig
