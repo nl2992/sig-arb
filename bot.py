@@ -66,6 +66,30 @@ REDEPLOY_HAIRCUT = 0.8          # an exit to redeploy must beat holding by this 
 _cash_blocked: list = []        # (time, settlement return) of arbs skipped for lack of cash
 
 
+DAY_BASE = pathlib.Path(__file__).parent / "logs" / "day_pnl_base.json"
+MTM_LOSS_MULT = 3.0             # SIG's mark-to-market day P&L only pauses entries at this x daily_loss
+
+
+def realized_today(ledgers: dict, today: str, exec_log: pathlib.Path = None, base_path: pathlib.Path = None) -> float:
+    """P&L of positions closed today: the change in the strategy ledgers' realized totals since
+    the day's first reading (persisted, so a restart keeps it) plus today's arb unwinds. SIG's
+    day P&L also marks every held position, and hedged No sets mark down whenever the race's
+    YES prices drift up, which paused entries on 7 Oct at -501 with ~-28 actually realized."""
+    base_path = base_path or DAY_BASE
+    total = sum(float(r.get("realized", 0.0)) for led in ledgers.values() for r in led.rows.values())
+    try:
+        base = json.loads(base_path.read_text())
+    except (OSError, ValueError):
+        base = {}
+    if base.get("date") != today:
+        base = {"date": today, "ledger_realized": total}
+        base_path.parent.mkdir(parents=True, exist_ok=True)
+        base_path.write_text(json.dumps(base))
+    arb = sum(float(r.get("pnl") or 0.0) for r in holdings_check._rows(exec_log or EXEC_LOG)
+              if r.get("live") and (r.get("result") or {}).get("unwind") and str(r.get("ts", "")).startswith(today))
+    return total - float(base["ledger_realized"]) + arb
+
+
 def redeploy_edge(now: float = None) -> Optional[float]:
     """Return a freed dollar would earn in arbs now waiting for cash (median of those skipped
     within REDEPLOY_WINDOW_S, haircut), or None when nothing is waiting: then holding to
@@ -1125,6 +1149,7 @@ def main():
     arb_pos = None                           # arb legs from the journal; reloaded after arb trades
     balance, balance_at = None, 0.0
     paused_day = None                        # local date new entries are paused for (daily loss)
+    day_realized = None
     book_cache = {}
     live = False
     try:
@@ -1173,14 +1198,18 @@ def main():
                             budget = a.claw.mm_budget() if getattr(a, "claw", None) is not None else a.mm_max_capital
                             room = a.max_gross - risk.gross
                             mm.max_capital = min(budget, mm_ledger.gross() + room) if room > 0 else 0.0
-                        # daily loss limit (config daily_loss): SIG's own day P&L; at the limit no new
-                        # entries in any strategy until the date changes, exits keep running
+                        # daily loss limit (config daily_loss) on positions closed today; SIG's mark-to-market
+                        # day P&L only as a backstop at MTM_LOSS_MULT x. At the limit no new entries in any
+                        # strategy until the date changes; exits keep running.
                         day_pnl = (port.get("dailyPnL") or {}).get("value")
                         today = dt.date.today().isoformat()
-                        if limits.get("daily_loss") and day_pnl is not None and day_pnl <= -limits["daily_loss"]:
+                        day_realized = realized_today(ledgers, today)
+                        lim = limits.get("daily_loss") or 0
+                        if lim and (day_realized <= -lim or (day_pnl is not None and day_pnl <= -MTM_LOSS_MULT * lim)):
                             if paused_day != today:
-                                log.warning("daily loss limit: day P&L %.2f <= -%g; new entries paused until "
-                                            "tomorrow, exits continue", day_pnl, limits["daily_loss"])
+                                log.warning("daily loss limit: realized today %.2f (limit -%g), SIG day P&L %s "
+                                            "(backstop -%g); new entries paused until tomorrow, exits continue",
+                                            day_realized, lim, day_pnl, MTM_LOSS_MULT * lim)
                             paused_day = today
                         if paused_day == today and mm is not None:
                             mm.max_capital = 0.0       # quotes only reduce inventory
@@ -1422,6 +1451,7 @@ def main():
                 error = str(e)[:300]
                 log.exception("tick failed: %s", e)
             write_status(BOT_STATUS, mode=a.mode, live_requested=a.live, live=live, entries_paused_day=paused_day,
+                         day_realized=round(day_realized, 2) if day_realized is not None else None,
                          live_blockers=blockers, kill_switch=kill_switch_engaged(),
                          payload_confirmed=sig_client.PLACE_PAYLOAD_CONFIRMED,
                          interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,
