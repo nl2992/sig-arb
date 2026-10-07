@@ -1192,7 +1192,8 @@ def main():
                     except Exception as e:
                         log.warning("could not read account snapshot: %s", e)
                     balance_at = time.time()
-                budget = a.budget or balance or 100_000
+                # size on cash less the top-up margin, or every arb lands just over the cash check
+                budget = a.budget or (balance / ARB_CASH_MARGIN if balance else None) or 100_000
                 scan = {}
                 if mm is not None:
                     mm.live = worker_live["live"] = live     # the worker pulls quotes when not live
@@ -1322,7 +1323,7 @@ def main():
                             # balance is read once a minute: spend it down here, or the next race this
                             # pass is sized on cash already gone and SIG rejects one of its legs
                             balance = max(0.0, balance - capital_spent(res))
-                            budget = balance or budget
+                            budget = (balance / ARB_CASH_MARGIN) or budget
                         counts["executed"] += 1
                         last_exec = {"race": r.race, "status": res["status"], "live": live,
                                      "book_age_s": round(time.time() - t0, 1)}
