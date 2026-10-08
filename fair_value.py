@@ -152,14 +152,17 @@ def slip_ok(price: float, fair: float, *, selling: bool, max_slip: float) -> boo
 
 def exit_signal(book: Book, fair: float, position: float, exit_band: float, entry: Optional[float] = None,
                 tp: Optional[float] = None, stop: Optional[float] = None, max_slip: float = 0.03,
-                held_s: float = 0.0, max_hold_s: Optional[float] = None) -> Optional[dict]:
+                held_s: float = 0.0, max_hold_s: Optional[float] = None,
+                keep_edge: Optional[float] = None) -> Optional[dict]:
     """Close a fair-value position (signed YES qty). Reasons, first match wins:
     target    SIG pays >= `tp` better than the entry
     stop      the reference fair moved >= `stop` against the entry (thesis broken); only
               executed at a SIG price no more than `max_slip` worse than fair, never into
               an empty book (a price at or better than fair is always taken)
     converged SIG is back within `exit_band` of fair (the mispricing is gone)
-    time      held longer than `max_hold_s` (off when None), same slippage guard."""
+    time      held longer than `max_hold_s` (off when None), same slippage guard; with
+              `keep_edge`, only once fair is within keep_edge of the exit price, so a
+              position fair still prices well above SIG is held, not dumped at SIG's discount."""
     def guarded(price):
         return slip_ok(price, fair, selling=position > 0, max_slip=max_slip)
     if position > 0 and book.bids:
@@ -167,7 +170,8 @@ def exit_signal(book: Book, fair: float, position: float, exit_band: float, entr
         why = ("target" if entry is not None and tp and price >= entry + tp
                else "stop" if entry is not None and stop and fair <= entry - stop and guarded(price)
                else "converged" if price >= fair - exit_band
-               else "time" if max_hold_s and held_s >= max_hold_s and guarded(price) else None)
+               else "time" if max_hold_s and held_s >= max_hold_s and guarded(price)
+               and (keep_edge is None or fair - price <= keep_edge) else None)
         if why:
             return {"yes_side": "SELL", "limit": price, "qty": float(min(position, size)),
                     "fair": round(fair, 4), "exit": why, "entry": None if entry is None else round(entry, 4)}
@@ -176,7 +180,8 @@ def exit_signal(book: Book, fair: float, position: float, exit_band: float, entr
         why = ("target" if entry is not None and tp and price <= entry - tp
                else "stop" if entry is not None and stop and fair >= entry + stop and guarded(price)
                else "converged" if price <= fair + exit_band
-               else "time" if max_hold_s and held_s >= max_hold_s and guarded(price) else None)
+               else "time" if max_hold_s and held_s >= max_hold_s and guarded(price)
+               and (keep_edge is None or price - fair <= keep_edge) else None)
         if why:
             return {"yes_side": "BUY", "limit": price, "qty": float(min(-position, size)),
                     "fair": round(fair, 4), "exit": why, "entry": None if entry is None else round(entry, 4)}
@@ -266,7 +271,7 @@ def touch_edge(book: Book, fair: float) -> float:
 def plan_market(book: Book, fair: Optional[dict], ledger: Ledger, *, threshold: float, exit_band: float,
                 max_per_market: float, gross_left: float, unit: Optional[float] = None,
                 tp: Optional[float] = None, stop: Optional[float] = None, max_slip: float = 0.03,
-                max_hold_s: Optional[float] = None, min_sources: int = 1,
+                max_hold_s: Optional[float] = None, keep_edge: Optional[float] = None, min_sources: int = 1,
                 kelly_bankroll: Optional[float] = None, kelly_fraction: float = 0.25) -> Optional[dict]:
     """Exit first, else entry; None when nothing to do. With `unit`, entry capital scales
     with the gap: unit x (edge at the touch / threshold), so a large move on Kalshi or
@@ -277,7 +282,8 @@ def plan_market(book: Book, fair: Optional[dict], ledger: Ledger, *, threshold: 
     pos = ledger.position(book.market_id)
     if pos:
         ex = exit_signal(book, f, pos, exit_band, entry=ledger.avg_yes(book.market_id), tp=tp, stop=stop,
-                         max_slip=max_slip, held_s=ledger.held_for(book.market_id), max_hold_s=max_hold_s)
+                         max_slip=max_slip, held_s=ledger.held_for(book.market_id), max_hold_s=max_hold_s,
+                         keep_edge=keep_edge)
         if ex:
             return ex
     room = min(max_per_market - ledger.capital(book.market_id), gross_left)

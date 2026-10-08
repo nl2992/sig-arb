@@ -130,19 +130,34 @@ def realized_today(ledgers: dict, today: str, exec_log: pathlib.Path = None, bas
     the day's first reading (persisted, so a restart keeps it) plus today's arb unwinds. SIG's
     day P&L also marks every held position, and hedged No sets mark down whenever the race's
     YES prices drift up, which paused entries on 7 Oct at -501 with ~-28 actually realized."""
+    return sum(realized_today_by(ledgers, today, exec_log, base_path).values())
+
+
+def realized_today_by(ledgers: dict, today: str, exec_log: pathlib.Path = None,
+                      base_path: pathlib.Path = None) -> dict:
+    """Today's realized P&L per strategy: each ledger's change since the day's first reading
+    (persisted, so a restart keeps it) plus "arb" for today's arb unwinds."""
     base_path = base_path or DAY_BASE
-    total = sum(float(r.get("realized", 0.0)) for led in ledgers.values() for r in led.rows.values())
+    now = {n: sum(float(r.get("realized", 0.0)) for r in led.rows.values()) for n, led in ledgers.items()}
     try:
         base = json.loads(base_path.read_text())
     except (OSError, ValueError):
         base = {}
-    if base.get("date") != today:
-        base = {"date": today, "ledger_realized": total}
+    if base.get("date") != today or "by" not in base:
+        if base.get("date") == today and "ledger_realized" in base:
+            # the day began under the single-total format: carry its gain over, booked to fv
+            by = dict(now)
+            by["fv"] = now.get("fv", 0.0) - (sum(now.values()) - float(base["ledger_realized"]))
+        else:
+            by = dict(now)
+        base = {"date": today, "by": by}
         base_path.parent.mkdir(parents=True, exist_ok=True)
         base_path.write_text(json.dumps(base))
-    arb = sum(float(r.get("pnl") or 0.0) for r in holdings_check._rows(exec_log or EXEC_LOG)
-              if r.get("live") and (r.get("result") or {}).get("unwind") and str(r.get("ts", "")).startswith(today))
-    return total - float(base["ledger_realized"]) + arb
+    out = {n: round(now[n] - float(base["by"].get(n, now[n])), 2) for n in now}
+    out["arb"] = round(sum(float(r.get("pnl") or 0.0) for r in holdings_check._rows(exec_log or EXEC_LOG)
+                           if r.get("live") and (r.get("result") or {}).get("unwind")
+                           and str(r.get("ts", "")).startswith(today)), 2)
+    return out
 
 
 def redeploy_edge(now: float = None) -> Optional[float]:
@@ -610,6 +625,7 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
                                           tp=getattr(a, "fv_tp", None), stop=getattr(a, "fv_stop", None),
                                           max_slip=getattr(a, "fv_max_slip", 0.03),
                                           max_hold_s=getattr(a, "fv_max_hold", 0) or None,
+                                          keep_edge=getattr(a, "fv_keep_edge", None),
                                           min_sources=getattr(a, "fv_min_sources", 1),
                                           kelly_bankroll=getattr(a, "fv_kelly_bankroll", None),
                                           kelly_fraction=getattr(a, "fv_kelly_fraction", 0.25))
@@ -995,7 +1011,7 @@ def main():
     ap.add_argument("--chase-ticks", type=int, default=2)
     ap.add_argument("--arb-depth-ratio", type=float, default=2.0,
                     help="arb legs need this multiple of our size resting at or better than the limit (0 = off)")
-    ap.add_argument("--arb-exit-share", type=float, default=0.5,
+    ap.add_argument("--arb-exit-share", type=float, default=0.3,
                     help="unwind held arbs early once that banks this share of the settlement profit")
     ap.add_argument("--no-arb-exits", dest="arb_exits", action="store_false",
                     help="hold arbs to settlement")
@@ -1034,7 +1050,9 @@ def main():
     ap.add_argument("--fv-kelly-bankroll", type=float, default=100000,
                     help="fv: bankroll for fractional-Kelly entry sizing (0 = off)")
     ap.add_argument("--fv-kelly-fraction", type=float, default=0.25, help="fv: Kelly fraction")
-    ap.add_argument("--fv-max-hold", type=float, default=259200, help="fv: time stop in sec (0 = hold to settlement)")
+    ap.add_argument("--fv-keep-edge", type=float, default=0.02,
+                    help="fv: time stop only once fair is within this of the exit price (else hold)")
+    ap.add_argument("--fv-max-hold", type=float, default=21600, help="fv: time stop in sec (0 = hold to settlement)")
     ap.add_argument("--ref-interval", type=float, default=120, help="fv: sec between reference refreshes")
     ap.add_argument("--poly-poll", type=float, default=3.0, help="ll/mm: sec between Polymarket book polls")
     ap.add_argument("--ll-move", type=float, default=0.02, help="ll: Polymarket mid move that triggers")
@@ -1221,6 +1239,7 @@ def main():
     balance, balance_at = None, 0.0
     paused_day = None                        # local date new entries are paused for (daily loss)
     day_realized = None
+    day_by = {}
     book_cache = {}
     live = False
     try:
@@ -1274,7 +1293,8 @@ def main():
                         # strategy until the date changes; exits keep running.
                         day_pnl = (port.get("dailyPnL") or {}).get("value")
                         today = dt.date.today().isoformat()
-                        day_realized = realized_today(ledgers, today)
+                        day_by = realized_today_by(ledgers, today)
+                        day_realized = sum(day_by.values())
                         lim = limits.get("daily_loss") or 0
                         if lim and (day_realized <= -lim or (day_pnl is not None and day_pnl <= -MTM_LOSS_MULT * lim)):
                             if paused_day != today:
@@ -1527,6 +1547,7 @@ def main():
                 log.exception("tick failed: %s", e)
             write_status(BOT_STATUS, mode=a.mode, live_requested=a.live, live=live, entries_paused_day=paused_day,
                          day_realized=round(day_realized, 2) if day_realized is not None else None,
+                         day_realized_by=day_by,
                          live_blockers=blockers, kill_switch=kill_switch_engaged(),
                          payload_confirmed=sig_client.PLACE_PAYLOAD_CONFIRMED,
                          interval=a.interval, gross=round(risk.gross, 2), max_gross=a.max_gross,

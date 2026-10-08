@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "per_trade_capital": 2000,
+  "per_trade_capital": 3000,
   "daily_loss": 500,
   "venue_exposure": {
     "sig": 120000,
     "kalshi": 0,
     "polymarket": 0
   },
-  "event_exposure": 2500,
+  "event_exposure": 4000,
   "max_quote_age_s": 5.0,
   "max_slippage": 0.01,
   "max_residual_contracts": 50,
-  "min_net_edge": 0.015,
+  "min_net_edge": 0.01,
   "manual_approval": false,
   "auto_hedge": false,
   "high_ev_reserve": {

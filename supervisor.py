@@ -297,6 +297,10 @@ def status() -> int:
             r = st["reserve"]
             print(f"reserve      {r['used']:,.0f} / {r['capital']:,.0f} above the cap, for entries expected to "
                   f"return >= {r['min_roi']:.0%}")
+        if st.get("day_realized") is not None:
+            by = st.get("day_realized_by") or {}
+            print(f"realized     {st['day_realized']:+,.2f} today | "
+                  + ", ".join(f"{k} {v:+,.2f}" for k, v in sorted(by.items())))
         print(f"counts       {st.get('counts')}")
         if st.get("fv"):
             print(f"fair value   {st['fv']}")
