@@ -35,7 +35,7 @@ import time
 import uuid
 from typing import Dict, Optional
 
-from arb_engine import ArbResult, Book, breakeven_limit, group_markets, max_executable_arb
+from arb_engine import ArbResult, Book, LegFill, breakeven_limit, group_markets, max_executable_arb
 import arb_exits
 import conviction
 import fair_value
@@ -704,6 +704,72 @@ def run_fair_value(cli: Client, snap: Snapshot, refs, ledger, a, live: bool, ris
     return out
 
 
+def run_completion(cli: Client, snap: Snapshot, race: str, acct: dict, acct_avg: dict, ledgers: dict,
+                   exits, a, live: bool) -> Optional[dict]:
+    """Turn a one-sided No in a 2-candidate race into a complete No set when buying the other
+    side's No locks a profit (arb_exits.completion_plan). The held leg moves from the fv ledger
+    (when fv owns it) to the arb books at its cost, so fv exits can no longer sell half a set."""
+    ids = list(group_markets(snap.markets).get(race, {}).values())
+    if len(ids) != 2 or any(m not in snap.levels for m in ids):
+        return None
+    fvl = ledgers.get("fv")
+    others = [n for n in ("ll", "mm", "cv") if n in ledgers]
+    held_cost = {}
+    for m in ids:
+        if any(ledgers[n].position(m) for n in others):
+            return None                       # another strategy works this market
+        if fvl is not None and fvl.position(m) < 0:
+            held_cost[m] = 1.0 - fvl.avg_yes(m)
+        elif m in acct_avg and acct_avg[m][0] < 0:
+            held_cost[m] = acct_avg[m][1]
+    books = {m: Book.from_levels(m, snap.levels[m]) for m in ids}
+    plan = arb_exits.completion_plan(race, ids, books, acct, held_cost, min_lock=a.complete_min_lock)
+    if not plan or kill_switch_engaged() or a.mode != "auto":
+        return None
+    desc = (f"COMPLETE {race}: buy No #{plan['buy']} x{plan['qty']:g} @ {1 - plan['limit']:.3f} against held "
+            f"No #{plan['held']} @ {plan['held_cost']:.3f}, locks {plan['lock']:.2f}")
+    if live:
+        cash = cli.balance()
+        if cash is not None and plan["cash"] * ARB_CASH_MARGIN > cash:
+            log.info("skip %s (needs %.0f + margin, cash %.0f)", desc, plan["cash"], cash)
+            return None
+        for m in (plan["held"], plan["buy"]):
+            if exits is not None and not exits.claim_taker(m):
+                return None                   # a resting exit works it: wait for its cancel + snapshot
+        r = ArbResult(race=race, direction="SELL_ALL", qty=plan["qty"],
+                      legs=[LegFill(plan["buy"], plan["exchange_id"], [(plan["limit"], plan["qty"])])],
+                      pnl=plan["lock"], capital=plan["cash"], top_edge=plan["lock_per_set"],
+                      marginal_edge=plan["lock_per_set"], steps=[])
+        if pull_own_orders(cli, r):
+            log.info("%s: pulled own resting orders first; retry next pass", race)
+            return None
+    coid = f"complete:{uuid.uuid4().hex[:12]}"
+    with critical():
+        try:
+            resp = place_tracked(cli, "arb", plan["buy"], plan["exchange_id"], "SELL", plan["limit"], plan["qty"],
+                                 live, coid)
+        except Exception as e:
+            log.error("%s rejected: %s", desc, e)
+            return None
+        fq, fp, oids = _fill_of(resp, plan["qty"], plan["limit"])
+        if fq < plan["qty"]:
+            for oid in oids:
+                cli.cancel(oid, dry_run=not live)
+        if live and fq > 0 and not resp.get("dryRun"):
+            if fvl is not None and fvl.position(plan["held"]) < 0:
+                fvl.transfer_out(plan["held"], fq)
+                holdings_check._append(holdings_check.MANUAL_LOG, {"ts": holdings_check._now(), "action": "journal_backfill",
+                                                    "market_id": plan["held"], "qty": -fq,
+                                                    "price_yes": round(1 - plan["held_cost"], 6),
+                                                    "reason": f"completed set {coid}: fv leg moved to arb"})
+            holdings_check._append(holdings_check.MANUAL_LOG, {"ts": holdings_check._now(), "action": "journal_backfill",
+                                                "market_id": plan["buy"], "qty": -fq, "price_yes": fp,
+                                                "reason": f"completed set {coid}: bought No"})
+            acct[plan["buy"]] = acct.get(plan["buy"], 0.0) - fq
+    log.info("%s -> filled %g", desc, fq)
+    return {"status": "DONE" if fq >= plan["qty"] else ("PARTIAL" if fq else "MISS"), "qty": fq, **plan}
+
+
 def run_arb_exit(cli: Client, snap: Snapshot, race: str, arb_pos: dict, acct: dict, a, live: bool,
                  risk=None) -> Optional[dict]:
     """Unwind a race's complete arb sets before settlement when that is profitable and banks
@@ -1050,6 +1116,10 @@ def main():
     ap.add_argument("--fv-kelly-bankroll", type=float, default=100000,
                     help="fv: bankroll for fractional-Kelly entry sizing (0 = off)")
     ap.add_argument("--fv-kelly-fraction", type=float, default=0.25, help="fv: Kelly fraction")
+    ap.add_argument("--fv-rest-converge", type=float, default=0.5,
+                    help="fv resting exits: when fair is beyond the take-profit, rest this share of the way to fair")
+    ap.add_argument("--complete-min-lock", type=float, default=0.005,
+                    help="complete a one-sided 2-way race into a No set when it locks this much per set")
     ap.add_argument("--fv-keep-edge", type=float, default=0.02,
                     help="fv: time stop only once fair is within this of the exit price (else hold)")
     ap.add_argument("--fv-max-hold", type=float, default=21600, help="fv: time stop in sec (0 = hold to settlement)")
@@ -1214,7 +1284,7 @@ def main():
     # Standing take-profit orders for fair-value and conviction positions (own worker thread).
     exits = None
     if getattr(a, "resting_exits", False) and strategies & {"fv", "cv"} and refs is not None:
-        rules = {"fv": {"tp": a.fv_tp, "band": a.fv_exit, "stop": a.fv_stop},
+        rules = {"fv": {"tp": a.fv_tp, "band": a.fv_exit, "stop": a.fv_stop, "converge": a.fv_rest_converge},
                  "cv": {"band": a.cv_exit, "stop": a.cv_stop, "floor_at_entry": True, "take": a.cv_take}}
         exits = resting_exits.RestingExits(cli, {k: ledgers[k] for k in ("fv", "cv") if k in strategies},
                                            place_tracked, rules=rules, requote_s=a.exit_requote, intent_log=INTENT_LOG)
@@ -1382,6 +1452,11 @@ def main():
                     if "arb" in strategies and getattr(a, "arb_exits", False):
                         if arb_pos is None:
                             arb_pos = positions.arb_costs(EXEC_LOG, account_avg=acct_avg)
+                        done = run_completion(cli, snap, race, acct, acct_avg, ledgers, exits, a, live)
+                        if done is not None and done.get("qty"):
+                            arb_pos = None
+                            counts["completed"] = counts.get("completed", 0) + 1
+                            continue                 # books are stale now
                         res = run_arb_exit(cli, snap, race, arb_pos, acct, a, live, risk)
                         if res is not None:
                             arb_pos = None

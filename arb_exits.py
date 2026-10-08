@@ -111,6 +111,30 @@ def unwind_plan(race: str, ids: List[int], books: Dict[int, Book], arb: Dict[int
             "settle_profit": round((settle - cost) * k, 2), "cost_per_set": cost, "settle_per_set": settle}
 
 
+def completion_plan(race: str, ids: List[int], books: Dict[int, Book], acct: Dict[int, float],
+                    held_cost: Dict[int, float], *, min_lock: float = 0.005, min_total: float = 3.0,
+                    min_qty: int = 10) -> Optional[dict]:
+    """Two-candidate race where the account holds No on one side only: buy No on the other
+    side (sell YES into its bid) when that locks a profit, turning a directional position into
+    a complete set paying 1. `held_cost`: No price paid per share for the held leg.
+    Sized to the held leftover beyond complete sets and the bid's top level."""
+    if len(ids) != 2:
+        return None
+    no = {m: max(0.0, -acct.get(m, 0.0)) for m in ids}
+    have, want = (ids[0], ids[1]) if no[ids[0]] > no[ids[1]] else (ids[1], ids[0])
+    left = no[have] - no[want]
+    if left < min_qty or have not in held_cost or not books[want].bids:
+        return None
+    bid, size = books[want].bids[0]
+    k = float(int(min(left, size)))
+    lock = 1.0 - (held_cost[have] + (1.0 - bid))
+    if k < min_qty or lock < min_lock or lock * k < min_total:
+        return None
+    return {"race": race, "held": have, "buy": want, "exchange_id": books[want].exchange_id,
+            "limit": bid, "qty": k, "lock_per_set": round(lock, 4), "lock": round(lock * k, 2),
+            "held_cost": held_cost[have], "cash": round(k * (1.0 - bid), 2)}
+
+
 def as_result(plan: dict) -> ArbResult:
     """The unwind as an ArbResult, so bot.execute_parallel sends it like any arb."""
     k = plan["qty"]

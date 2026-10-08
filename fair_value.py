@@ -245,6 +245,23 @@ class Ledger:
         row["updated_at"] = _now()
         self.save()
 
+    def transfer_out(self, market_id: int, qty: float) -> float:
+        """Hand `qty` of a position to another book at its average cost (no realized P&L).
+        Returns the YES-terms average entry of what left."""
+        row = self.rows.get(market_id)
+        pos = float(row.get("qty", 0.0)) if row else 0.0
+        if not pos or qty <= 0:
+            return 0.0
+        entry = self.avg_yes(market_id)
+        q = min(qty, abs(pos))
+        row["capital"] -= row["capital"] * q / abs(pos)
+        row["qty"] = pos - q if pos > 0 else pos + q
+        if abs(row["qty"]) < 1e-9:
+            row["qty"], row["capital"] = 0.0, 0.0
+        row["updated_at"] = _now()
+        self.save()
+        return entry
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")

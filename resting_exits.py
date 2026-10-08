@@ -8,7 +8,9 @@ on its side of the book).
 
 Price (YES terms; rounded a tick in our favour):
   fv  the prices where fair_value.exit_signal's target / converged rules fire:
-      long: sell at min(entry + tp, fair - band); short: buy at max(entry - tp, fair + band)
+      long: sell at min(entry + tp, fair - band); short: buy at max(entry - tp, fair + band);
+      with "converge", when fair is beyond the take-profit the order sits that share of the
+      way toward fair instead, so a fill banks part of the reference mispricing, not 1c
   cv  take profit once SIG reaches fair, never below the entry:
       long: sell at max(fair - band, entry);       short: buy at min(fair + band, entry)
 No order while the strategy's stop condition holds: the taker stop handles that.
@@ -46,6 +48,7 @@ TOL = 0.5
 def exit_price(rule: dict, pos: float, entry: float, fair: float) -> Optional[float]:
     """YES-terms price of the resting exit for a signed position, or None."""
     band, tp = rule.get("band", 0.0), rule.get("tp")
+    lean = rule.get("converge") or 0.0          # fv: share of the way from the take-profit to fair
     if pos > 0:
         px = fair - band
         if rule.get("take") is not None:          # break-even or better: the nearer of the two
@@ -53,7 +56,8 @@ def exit_price(rule: dict, pos: float, entry: float, fair: float) -> Optional[fl
         elif rule.get("floor_at_entry"):
             px = max(px, entry)
         elif tp:
-            px = min(px, entry + tp)
+            base = entry + tp
+            px = base + lean * (px - base) if px > base else px
         px = ceil_tick(px)
     else:
         px = fair + band
@@ -62,7 +66,8 @@ def exit_price(rule: dict, pos: float, entry: float, fair: float) -> Optional[fl
         elif rule.get("floor_at_entry"):
             px = min(px, entry)
         elif tp:
-            px = max(px, entry - tp)
+            base = entry - tp
+            px = base - lean * (base - px) if px < base else px
         px = floor_tick(px)
     return px if 0 < px < 1 else None
 
