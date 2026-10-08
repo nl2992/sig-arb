@@ -1416,6 +1416,8 @@ def main():
                             budget = a.claw.mm_budget() if getattr(a, "claw", None) is not None else a.mm_max_capital
                             room = a.max_gross - risk.gross
                             mm.max_capital = min(budget, mm_ledger.gross() + room) if room > 0 else 0.0
+                            if mx is not None:
+                                mm.max_capital = 0.0   # maker-fv experiment: mm only exits (claw would re-grow it)
                         # daily loss limit (config daily_loss) on positions closed today; SIG's mark-to-market
                         # day P&L only as a backstop at MTM_LOSS_MULT x. At the limit no new entries in any
                         # strategy until the date changes; exits keep running.
@@ -1477,6 +1479,8 @@ def main():
                 scan = {}
                 if mm is not None:
                     mm.live = worker_live["live"] = live     # the worker pulls quotes when not live
+                if mx is not None:
+                    mx.live = worker_live["live"] = live     # the worker only trades when live
                 if exits is not None:
                     exits.live = live                        # the worker pulls its orders when not live
                 exits_claim = exits.claim_taker if exits is not None else None
