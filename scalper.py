@@ -288,11 +288,49 @@ def mm_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[flo
     return out
 
 
+def mx_quotes(book: Book, fair: float, inventory: float, avg_entry: Optional[float], held_s: float, *,
+              size: float, min_gap: float, take: float, stop: float, band: float, converge: float,
+              max_hold_s: float, keep_edge: float, min_price: float = 0.15, max_price: float = 0.85) -> Dict[str, tuple]:
+    """Maker fair value: rest at SIG's touch on the side Kalshi/Polymarket fair favours, one side
+    only. SIG spreads are a tick (0.5c) but SIG's mid sits a median 2.8c off fair (8 Oct), so
+    the edge is the mispricing, not the spread.
+    Flat: join the best bid when fair >= best ask + min_gap (or the best ask when fair <= best
+          bid - min_gap), `size` shares.
+    Held: only the closing order. Normally `converge` of the way from entry + take toward fair -
+          band (the resting-exit rule); at the touch to leave at once when fair has moved `stop`
+          against the entry, or when held past max_hold_s with fair within keep_edge of the touch."""
+    if not book.bids or not book.asks:
+        return {}
+    bb, ba = book.bids[0][0], book.asks[0][0]
+    if inventory:
+        long = inventory > 0
+        entry = avg_entry if avg_entry is not None else fair
+        if long:
+            leave = fair <= entry - stop or (held_s >= max_hold_s and fair - bb <= keep_edge)
+            base, target = entry + take, fair - band
+            px = bb if leave else ceil_tick(base + converge * (target - base) if target > base else max(target, bb))
+            return {"ask": (px, abs(inventory))} if 0 < px < 1 else {}
+        leave = fair >= entry + stop or (held_s >= max_hold_s and ba - fair <= keep_edge)
+        base, target = entry - take, fair + band
+        px = ba if leave else floor_tick(base - converge * (base - target) if target < base else min(target, ba))
+        return {"bid": (px, abs(inventory))} if 0 < px < 1 else {}
+    if not size or not (min_price <= fair <= max_price):
+        return {}
+    if fair - ba >= min_gap:
+        return {"bid": (bb, size)}
+    if bb - fair >= min_gap:
+        return {"ask": (ba, size)}
+    return {}
+
+
 class MarketMaker:
     def __init__(self, cli, ledger, *, edge=0.01, size=300, max_inventory=1000, take=0.01, max_hold_s=1800,
                  min_spread=0.02, max_markets=8, requote_s=15, live=False, place=None,
-                 min_price=0.10, max_price=0.90, max_capital=float("inf"), flatten_s=None, max_loss=0.01):
+                 min_price=0.10, max_price=0.90, max_capital=float("inf"), flatten_s=None, max_loss=0.01,
+                 name: str = "mm", quote_fn=None):
         self.cli, self.ledger, self.live = cli, ledger, live
+        self.name = name                   # strategy tag for intents and client order ids
+        self.quote_fn = quote_fn           # (book, fair, inv, avg_entry, held_s, size) -> quotes; None = mm_quotes
         self.edge, self.size, self.max_inventory, self.take = edge, size, max_inventory, take
         self.max_hold_s, self.min_spread, self.max_markets, self.requote_s = max_hold_s, min_spread, max_markets, requote_s
         self.place = place                 # place_tracked-compatible callable (writes intents)
@@ -379,11 +417,14 @@ class MarketMaker:
         if time.time() - self.quoted_at.get(m, 0) < self.requote_s:
             return {}
         size = self.size if self.ledger.gross() < self.max_capital else 0
-        want = mm_quotes(book, fair, inv, self.ledger.avg_yes(m), self.ledger.held_for(m), edge=self.edge,
-                         size=size, max_inventory=self.max_inventory, take=self.take,
-                         max_hold_s=self.max_hold_s, min_spread=self.min_spread,
-                         min_price=self.min_price, max_price=self.max_price,
-                         flatten_s=self.flatten_s, max_loss=self.max_loss)
+        if self.quote_fn is not None:
+            want = self.quote_fn(book, fair, inv, self.ledger.avg_yes(m), self.ledger.held_for(m), size)
+        else:
+            want = mm_quotes(book, fair, inv, self.ledger.avg_yes(m), self.ledger.held_for(m), edge=self.edge,
+                             size=size, max_inventory=self.max_inventory, take=self.take,
+                             max_hold_s=self.max_hold_s, min_spread=self.min_spread,
+                             min_price=self.min_price, max_price=self.max_price,
+                             flatten_s=self.flatten_s, max_loss=self.max_loss)
         have = {}
         for o in self.open.get(m, []):
             c = classify_open_order(o)
@@ -403,9 +444,9 @@ class MarketMaker:
                         log.warning("mm cancel failed #%s: %s", m, e)
             if w and not keep and w[1] >= 10:
                 yes_side = "BUY" if side == "bid" else "SELL"
-                coid = f"mm:{m}:{side}:{int(time.time())}"
+                coid = f"{self.name}:{m}:{side}:{int(time.time())}"
                 try:
-                    self.place(self.cli, "mm", m, book.exchange_id, yes_side, w[0], float(int(w[1])),
+                    self.place(self.cli, self.name, m, book.exchange_id, yes_side, w[0], float(int(w[1])),
                                self.live, coid, holdings=holding)
                     self.last_quote_px[(m, side)] = w[0]
                     actions["placed"].append((side, w[0], int(w[1])))
@@ -518,9 +559,9 @@ class MarketMaker:
         True = passed, False = cancels do not work (disable MM), None = SIG errored (retry)."""
         if not self.live:
             return True
-        coid = f"mm:selftest:{int(time.time())}"
+        coid = f"{self.name}:selftest:{int(time.time())}"
         try:
-            self.place(self.cli, "mm", book.market_id, book.exchange_id, "BUY", 0.01, 50.0, True, coid,
+            self.place(self.cli, self.name, book.market_id, book.exchange_id, "BUY", 0.01, 50.0, True, coid,
                        holdings=holding)
             time.sleep(1.5)
             mine = [o for o in self.cli.portfolio().get("openOrders", []) if int(o.get("marketId", -1)) == book.market_id

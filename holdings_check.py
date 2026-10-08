@@ -67,7 +67,7 @@ def resolve_intent(coid: str, state: str, path: pathlib.Path = None, **fields) -
     _append(path or INTENT_LOG, {"ts": _now(), "client_order_id": coid, "state": state, **fields})
 
 
-def in_doubt(path: pathlib.Path = None, resting_strategies: tuple = ("mm",),
+def in_doubt(path: pathlib.Path = None, resting_strategies: tuple = ("mm", "mx"),
              resting_window_s: float = 6 * 3600) -> List[dict]:
     """Intents that may have filled without the bot booking it, oldest first:
     latest state SENT or UNKNOWN, or a recent resting order (strategy in

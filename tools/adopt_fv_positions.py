@@ -35,7 +35,7 @@ def plan(cli) -> list[dict]:
     port = cli.portfolio()
     avg = hc.account_avg(port)
     ledgers = [fair_value.Ledger(), *(fair_value.Ledger(ROOT / "logs" / n)
-                                      for n in ("ll_positions.json", "mm_positions.json", "cv_positions.json"))]
+                                      for n in ("ll_positions.json", "mm_positions.json", "cv_positions.json", "mx_positions.json"))]
     free = {m: q - sum(l.position(m) for l in ledgers) for m, (q, _) in avg.items()}
     covered: dict[int, float] = {}
     for legs in bot.group_markets(fast_scan.load_markets(cli)).values():

@@ -70,7 +70,7 @@ DAY_BASE = pathlib.Path(__file__).parent / "logs" / "day_pnl_base.json"
 RESTING_OWNERS = pathlib.Path(__file__).parent / "logs" / "resting_owners.json"
 
 
-def write_resting_owners(port: dict, exits=None, path: pathlib.Path = None) -> None:
+def write_resting_owners(port: dict, exits=None, path: pathlib.Path = None, mx=None) -> None:
     """Which strategy owns each market's resting orders (resting exits: their strategy; any
     other resting order is an MM quote), so fills made while the bot is down can be booked."""
     owners = {}
@@ -80,7 +80,8 @@ def write_resting_owners(port: dict, exits=None, path: pathlib.Path = None) -> N
             m = int(o["marketId"])
         except (KeyError, TypeError, ValueError):
             continue
-        owners[str(m)] = (orders.get(m) or {}).get("strategy") or "mm"
+        owners[str(m)] = ((orders.get(m) or {}).get("strategy")
+                          or ("mx" if mx is not None and m in mx.active_snapshot else "mm"))
     (path or RESTING_OWNERS).write_text(json.dumps({"ts": dt.datetime.now(dt.timezone.utc).isoformat(),
                                                     "owners": owners}))
 
@@ -713,7 +714,7 @@ def run_completion(cli: Client, snap: Snapshot, race: str, acct: dict, acct_avg:
     if len(ids) != 2 or any(m not in snap.levels for m in ids):
         return None
     fvl = ledgers.get("fv")
-    others = [n for n in ("ll", "mm", "cv") if n in ledgers]
+    others = [n for n in ("ll", "mm", "cv", "mx") if n in ledgers]
     held_cost = {}
     for m in ids:
         if any(ledgers[n].position(m) for n in others):
@@ -975,6 +976,25 @@ def run_market_maker(mm, snap: Snapshot, feed, refs, ledgers: dict, holdings: di
         mm.submit(book, fair, moving, holdings.get(m["id"], 0.0), test_ok)
 
 
+def run_maker_fv(mx, snap: Snapshot, refs, holdings: dict, skip: set) -> None:
+    """Queue maker-fair-value requotes for one freshly read race (worker thread sends them).
+    Fair needs two agreeing reference venues; markets other strategies work are skipped unless
+    mx already quotes or holds them (its exits must keep running)."""
+    for m in snap.markets:
+        mid = m["id"]
+        if mid in skip and mid not in mx.active_snapshot and not mx.ledger.position(mid):
+            continue
+        book = Book.from_levels(mid, snap.levels[mid])
+        f_ = refs.fair(mid) if refs is not None else None
+        fair = f_["fair"] if f_ and len(f_.get("sources") or []) >= 2 else None
+        test_ok = not holdings.get(mid) and bool(book.bids) and book.bids[0][0] >= 0.05
+        if mx.tested and not mx.eligible(mid, 0.0, fair):
+            continue
+        if not mx.tested and not test_ok:
+            continue
+        mx.submit(book, fair, False, holdings.get(mid, 0.0), test_ok)
+
+
 _mm_selftest_done = False
 
 
@@ -1118,6 +1138,21 @@ def main():
     ap.add_argument("--fv-kelly-fraction", type=float, default=0.25, help="fv: Kelly fraction")
     ap.add_argument("--fv-rest-converge", type=float, default=0.5,
                     help="fv resting exits: when fair is beyond the take-profit, rest this share of the way to fair")
+    ap.add_argument("--mx-min-gap", type=float, default=0.02, help="mx: rest only where fair is this far past SIG's touch")
+    ap.add_argument("--mx-size", type=float, default=300, help="mx: shares per resting entry")
+    ap.add_argument("--mx-max-inventory", type=float, default=600)
+    ap.add_argument("--mx-max-capital", type=float, default=10000, help="mx: experiment capital")
+    ap.add_argument("--mx-max-markets", type=int, default=30)
+    ap.add_argument("--mx-requote", type=float, default=60)
+    ap.add_argument("--mx-take", type=float, default=0.01)
+    ap.add_argument("--mx-stop", type=float, default=0.03, help="mx: leave once fair moved this far against the entry")
+    ap.add_argument("--mx-band", type=float, default=0.01)
+    ap.add_argument("--mx-converge", type=float, default=0.5)
+    ap.add_argument("--mx-max-hold", type=float, default=86400)
+    ap.add_argument("--mx-keep-edge", type=float, default=0.02)
+    ap.add_argument("--mx-min-price", type=float, default=0.15)
+    ap.add_argument("--mx-max-price", type=float, default=0.85)
+    ap.add_argument("--mx-kill-loss", type=float, default=100, help="mx: stop entries at this realized loss today")
     ap.add_argument("--complete-min-lock", type=float, default=0.005,
                     help="complete a one-sided 2-way race into a No set when it locks this much per set")
     ap.add_argument("--fv-keep-edge", type=float, default=0.02,
@@ -1200,14 +1235,15 @@ def main():
              a.mode, a.live, len(markets), a.max_gross, a.reserve, a.reserve_min_roi, a.max_per_race, a.min_edge)
 
     strategies = {x.strip() for x in a.strategy.split(",") if x.strip()}
-    if not strategies <= {"arb", "cv", "fv", "ll", "mm"}:
+    if not strategies <= {"arb", "cv", "fv", "ll", "mm", "mx"}:
         raise SystemExit(f"unknown --strategy {a.strategy}")
     refs = None
     ledger = fair_value.Ledger()            # also needed to reconcile holdings when fv is off
     ll_ledger = fair_value.Ledger(HERE / "logs" / "ll_positions.json")
     mm_ledger = fair_value.Ledger(HERE / "logs" / "mm_positions.json")
     cv_ledger = fair_value.Ledger(HERE / "logs" / "cv_positions.json")
-    ledgers = {"fv": ledger, "ll": ll_ledger, "mm": mm_ledger, "cv": cv_ledger}
+    mx_ledger = fair_value.Ledger(HERE / "logs" / "mx_positions.json")
+    ledgers = {"fv": ledger, "ll": ll_ledger, "mm": mm_ledger, "cv": cv_ledger, "mx": mx_ledger}
     checker = holdings_check.HoldingsCheck(ledgers, lambda why: engage_kill_switch(why, actor="holdings_check"),
                                            intent_log=INTENT_LOG, exec_log=EXEC_LOG)
     acct = {}                                # market_id -> signed YES holding (minute snapshot)
@@ -1251,10 +1287,25 @@ def main():
                                  min_price=a.mm_min_price, max_price=a.mm_max_price, max_capital=a.mm_max_capital,
                                  flatten_s=a.mm_flatten, max_loss=a.mm_max_loss, requote_s=a.mm_requote)
         mm.enabled = False                   # until the live self-test passes (in the worker)
+        if "mx" in strategies:
+            mm.max_capital = 0.0             # during the maker-fv experiment mm only exits its inventory
+            a.mm_max_capital = 0.0
+    mx = None
+    if "mx" in strategies:
+        import functools
+        mx = scalper.MarketMaker(
+            cli, mx_ledger, size=a.mx_size, max_inventory=a.mx_max_inventory, max_markets=a.mx_max_markets,
+            place=place_tracked, min_price=a.mx_min_price, max_price=a.mx_max_price,
+            max_capital=a.mx_max_capital, requote_s=a.mx_requote, name="mx",
+            quote_fn=lambda book, fair, inv, avg, held, size: scalper.mx_quotes(
+                book, fair, inv, avg, held, size=size, min_gap=a.mx_min_gap, take=a.mx_take, stop=a.mx_stop,
+                band=a.mx_band, converge=a.mx_converge, max_hold_s=a.mx_max_hold, keep_edge=a.mx_keep_edge,
+                min_price=a.mx_min_price, max_price=a.mx_max_price))
+        mx.enabled = False                   # until its live self-test passes (in the worker)
     a.claw = (Claw(HERE / "logs" / "claw.json", a.mm_max_capital, a.mm_claw_max)
               if getattr(a, "mm_claw", False) and mm is not None else None)
     worker_live = {"live": False}
-    if strategies & {"fv", "mm", "cv"}:
+    if strategies & {"fv", "mm", "cv", "mx"}:
         refs = fair_value.ReferencePrices()
         log.info("reference prices: %d approved mappings; first refresh...", len(refs.matches))
         refs.refresh()
@@ -1280,6 +1331,13 @@ def main():
 
     if mm is not None:
         mm.start_worker(lambda: others_expected("mm"), kill_switch_engaged, on_fill=mm_fill, poll_s=a.mm_poll)
+
+    def mx_fill(f_):
+        log.info("MX FILL #%s %s %g @ %s", f_["market_id"], f_["yes_side"], f_["qty"], f_["price"])
+        journal_single("mx", f_["market_id"], f_["yes_side"], f_["qty"], f_["price"], "FILL", worker_live["live"])
+
+    if mx is not None:
+        mx.start_worker(lambda: others_expected("mx"), kill_switch_engaged, on_fill=mx_fill, poll_s=a.mm_poll)
 
     # Standing take-profit orders for fair-value and conviction positions (own worker thread).
     exits = None
@@ -1374,6 +1432,13 @@ def main():
                             paused_day = today
                         if paused_day == today and mm is not None:
                             mm.max_capital = 0.0       # quotes only reduce inventory
+                        if mx is not None:
+                            # experiment stop: at -mx_kill_loss realized today mx only exits
+                            mx_cap = 0.0 if (paused_day == today or day_by.get("mx", 0.0) <= -a.mx_kill_loss) \
+                                else a.mx_max_capital
+                            if mx_cap == 0.0 and mx.max_capital:
+                                log.warning("maker-fv: entries stopped (realized today %.2f)", day_by.get("mx", 0.0))
+                            mx.max_capital = mx_cap
                         acct = holdings_check.actual_holdings(port)
                         acct_avg = holdings_check.account_avg(port)
                         arb_pos = None
@@ -1387,13 +1452,16 @@ def main():
                         if mm is not None:
                             with mm.lock:              # fills and reconciliation see one snapshot
                                 mm.sync_with(port)
+                                if mx is not None:
+                                    with mx.lock:
+                                        mx.sync_with(port)
                                 rep = checker.check(port, cli.transactions)
                         else:
                             rep = checker.check(port, cli.transactions)
                         if not rep["ok"]:
                             log.warning("holdings check: %s", json.dumps(rep))
                         try:
-                            write_resting_owners(port, exits)
+                            write_resting_owners(port, exits, mx=mx)
                         except Exception as e:
                             log.warning("resting owners not saved: %s", e)
                         try:                           # dashboard positions & P&L, no extra SIG calls
@@ -1596,8 +1664,14 @@ def main():
                         mm_avoid = exits_mkts | ({mk["id"] for mk in snap.markets
                                                   if ledger.position(mk["id"]) or cv_ledger.position(mk["id"])}
                                                  if exits is not None else set())
-                        run_market_maker(mm, snap, feed, refs, ledgers, acct, a, skip=touched,
+                        run_market_maker(mm, snap, feed, refs, ledgers, acct, a,
+                                         skip=touched | (set(mx.active_snapshot) if mx is not None else set()),
                                          exits_markets=frozenset(mm_avoid), news_held=news_held, arb_markets=arb_mkts)
+                    if mx is not None and live and not kill_switch_engaged():
+                        mx_skip = (touched | set(arb_mkts) | set(exits_mkts) | set(mm_busy)
+                                   | {mk["id"] for mk in snap.markets if ledger.position(mk["id"]) or cv_ledger.position(mk["id"])
+                                      or ll_ledger.position(mk["id"])})
+                        run_maker_fv(mx, snap, refs, acct, mx_skip)
                     if exits is not None and live:
                         for mk in snap.markets:
                             m_ = mk["id"]
@@ -1664,6 +1738,8 @@ def main():
                 log.warning("shutdown: first-pass cancel failed: %s", e)
         if mm is not None:
             mm.stop_worker(60)                 # finish the order in flight, then stop
+        if mx is not None:
+            mx.stop_worker(60)
         if exits is not None:
             exits.stop_worker(60)
         if nw is not None:
