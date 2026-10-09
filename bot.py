@@ -1117,7 +1117,7 @@ def main():
     ap.add_argument("--balance-every", type=float, default=60, help="sec between balance refreshes")
     ap.add_argument("--strategy", default="arb",
                     help="comma list: arb (complete-set arbs), fv (trade toward Kalshi/Polymarket fair value)")
-    ap.add_argument("--fv-threshold", type=float, default=0.05, help="fv: enter when SIG is this far past fair")
+    ap.add_argument("--fv-threshold", type=float, default=0.03, help="fv: enter when SIG is this far past fair")
     ap.add_argument("--fv-exit", type=float, default=0.01, help="fv: close once SIG is within this of fair")
     ap.add_argument("--fv-unit", type=float, default=500,
                     help="fv: capital at an edge equal to --fv-threshold; scales linearly with the gap")
